@@ -1,0 +1,25 @@
+fastapi[all]
+uvicorn
+
+openai==1.78.1
+httpx==0.27.2
+
+sqlalchemy >= 2.0.0
+asyncpg
+cryptography
+
+pytest
+pytest-asyncio
+alembic
+
+faker
+langchain==0.3.25
+langgraph==0.4.3
+langchain-openai==0.3.16
+
+
+ipython
+langchain_community
+
+asyncio
+
