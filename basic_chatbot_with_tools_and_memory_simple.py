@@ -19,9 +19,8 @@ from IPython.display import Image, display
 from utils.langgraph_utils import save_graph
 from dotenv import load_dotenv
 
-from tools.tekton_tools import TektonTools
-from tools.teamcity_tools import TeamCityTools    
-
+from tools.postgres_tools import PostgresTools
+ 
 load_dotenv(override=True)
 current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -33,8 +32,9 @@ class GraphState(TypedDict):
     # (in this case, it appends messages to the list, rather than overwriting them)
     messages: Annotated[list, add_messages]
 system_message="Today's date and time: " + current_datetime + "\n\n"
-system_message= system_message + """You are a content curation assistant.  
-
+system_message= system_message + """You are a knowledge base curation assistant.  
+You will take the time to understand the exisiting knowledge base and its structure.
+You will help the user to find articles in the knowledge base.
 
 
 """.strip()
@@ -47,10 +47,10 @@ llm  = AzureChatOpenAI(
 )
 
 
-teamcity_tools = TeamCityTools()
-tekton_tools = TektonTools()
+postgres_tools = PostgresTools()
 
-tools= teamcity_tools.tools + tekton_tools.tools 
+
+tools= postgres_tools.tools
 llm_with_tools = llm.bind_tools(tools)
 
 # Define Nodes

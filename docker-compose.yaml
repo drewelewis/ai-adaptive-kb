@@ -1,145 +1,24 @@
 services:
 
-  adminer:
-    image: adminer
-    container_name: langgraph_adminer
-    restart: always
-    ports:
-      - 8080:8080
-
-  teamcity:
-    image: jetbrains/teamcity-server:latest
-    container_name: langgraph_teamcity
-    ports:
-      - "8111:8111"
-    environment:
-      TEAMCITY_SERVER_MEM_OPTS: "-Xmx2g -XX:ReservedCodeCacheSize=512m"
-    volumes:
-      - teamcity_data:/data/teamcity_server/datadir
-      - teamcity_logs:/opt/teamcity/logs
-    networks:
-      - teamcity_network
-  teamcity-agent1:
-    image: jetbrains/teamcity-agent:latest
-    container_name: langgraph_teamcity_agent_1
-    environment:
-      - SERVER_URL=http://teamcity:8111
-      - AGENT_NAME=langgraph_agent
-    depends_on:
-      - teamcity
-    networks:
-      - teamcity_network
-
-  teamcity-agent2:
-    image: jetbrains/teamcity-agent:latest
-    container_name: langgraph_teamcity_agent_2
-    environment:
-      - SERVER_URL=http://teamcity:8111
-      - AGENT_NAME=langgraph_agent
-    depends_on:
-      - teamcity
-    networks:
-      - teamcity_network
-
-  # tekton:
-  # You need to have Openshift local installed to run this service successfully.
-  # https://zxtech.wordpress.com/2024/05/12/configuring-openshift-local/
-  # KUBERNETES_MASTER=https://api.crc.testing:6443
-    
-  udeploy:
-    image: mkorejo/ucd-server
-    container_name: langgraph_udeploy
-    ports:
-      - "8443:8443"
-      - "7919:7919"
-    environment:
-      - DB_HOST=mysql
-      - DB_NAME=ucd
-      - DB_USER=ucd
-      - DB_PASSWORD=ucd
-      - ADMIN_PASSWORD=password
-      - DEPLOY_SERVER_HOSTNAME=localhost
-      - HTTPS_PORT=8443
-    depends_on:
-      - mysql
-    networks:
-      - udeploy_network
-
-  tomcat:
-    image: tomcat:9.0.106-jre8-temurin-jammy
-    container_name: langgraph_tomcat    
-    ports:
-      - "7918:7918"
-      - "8888:8080"
-    environment:
-      - CATALINA_OPTS=-Xmx2g -XX:ReservedCodeCacheSize=512m
-      - UDEPLOY_SERVER_HOSTNAME=udeploy
-      - UDEPLOY_SERVER_PORT=8443
-    depends_on:
-      - udeploy
-    networks:
-      - udeploy_network
-    volumes:
-      - udeploy_data:/opt/ibm-ucd/agent
-      - tomcat_data:/usr/local/tomcat/webapps
-      - ./containers/tomcat/ibm-ucd-agent.zip:/ibm-ucd-agent.zip
-      - ./containers/tomcat/start-agent.sh:/opt/ibm-ucd/start-agent.sh
-    command: |
-      catalina.sh run logging.level=INFO && /opt/ibm-ucd/start-agent.sh 
-
-  mysql:
-    image: mysql:5.6
-    container_name: langgraph_udeploy_mysql
-    ports:
-      - "3306:3306"
-    environment:
-      - MYSQL_ROOT_PASSWORD=3%48f3#dkl
-      - MYSQL_DATABASE=ucd
-      - MYSQL_USER=ucd
-      - MYSQL_PASSWORD=ucd
-    networks:
-      - udeploy_network
-    volumes:
-      - mysql_data:/var/lib/mysql
-
-  postgres:
+  kb-postgres:
     image: postgres:17.5
-    container_name: langgraph_postgres
+    container_name: kb_postgres
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_DB: harness
-      POSTGRES_USER: harness
-      POSTGRES_PASSWORD: harness
+      POSTGRES_DB: kb-postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
-  harness:
-    image: harness/harness:latest
-    container_name: langgraph_harness
-    environment:
-      GITNESS_DATABASE_DRIVER: postgres
-      GITNESS_DATABASE_DATASOURCE: host=postgres port=5432 sslmode=disable dbname=harness user=harness password=harness
+  kb-adminer:
+    image: adminer
+    container_name: kb_adminer
+    restart: always
     ports:
-      - "3000:3000"
-      - "22:22"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /tmp/harness:/data
-    depends_on:
-      - postgres
+      - 8080:8080 
 
 volumes:
   postgres_data:
-  teamcity_data:
-  teamcity_logs:
-  tekton_data:
-  harness_data:
-  udeploy_data:
-  tomcat_data:
-  mysql_data:
-
-networks:
-  teamcity_network:
-  udeploy_network:

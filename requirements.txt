@@ -22,4 +22,5 @@ ipython
 langchain_community
 
 asyncio
+psycopg2
 
