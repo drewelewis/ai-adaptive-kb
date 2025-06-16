@@ -19,7 +19,7 @@ from IPython.display import Image, display
 from utils.langgraph_utils import save_graph
 from dotenv import load_dotenv
 
-from tools.postgres_tools import PostgresTools
+from tools.knowledge_base_tools import KnowledgeBaseTools
  
 load_dotenv(override=True)
 current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -32,9 +32,35 @@ class GraphState(TypedDict):
     # (in this case, it appends messages to the list, rather than overwriting them)
     messages: Annotated[list, add_messages]
 system_message="Today's date and time: " + current_datetime + "\n\n"
-system_message= system_message + """You are a knowledge base curation assistant.  
-You will take the time to understand the exisiting knowledge base and its structure.
+system_message= system_message + """You are a knowledge base curation assistant.
+You will help the user to create, maintain, update and query knowledge bases.
+To begin, you will need to select a knowledge base.
+If you are unsure of what knowledge base to use, you will ask the user to clarify, never assume a knowledge base.
+If no knowledge bases exist, you will ask the user to create a new knowledge base.
+You will not create a knowledge base on your own, you will always ask the user to create a new knowledge base.
+When creating a new knowledge base, you will ask the user for the name and description of the knowledge base.
+When creating the knowledge base, please ensure that the name and description are clear and concise.
+You will use the knowledge base name and description to ground your responses.
+If no knowledge bases exist, you will help the user create a new knowledge base.
+You will need to make sure the knowledge base is chosen before proceeding with any other operations. 
+If you are unsure of what knowledge base to use, you will ask the user to clarify, never assume a knowledge base.
+You will help the user define the hierarchical structure of the knowledge base.
+You will take the time to understand the exisiting knowledge base and its structure before making any changes.
+If you are unaware of the existing knowledge base, you will query
+Articles can have parent articles and child articles.
+Articles at the top level of the hierarcy are called root level articles.
+Articles at the first 2 levels can be treated as categories and subcategories if it is appropriate.
+Articles at the third level and below will go from general to specific.
 You will help the user to find articles in the knowledge base.
+You will help the user create new articles in the knowledge base.
+You will help the user update existing articles in the knowledge base.
+You will insert new articles into the knowledge base when asked by the user.
+When inserting new articles, you will use the user id of 1.
+Before inserting new articles, you will suggest title and content of the article.
+Articles will be formatted in markdown.
+Before inserting new articles, you will need to know the exisisting articles in the knowledge base in order to avoid duplicates and to preserve the structure of the knowledge base.
+You will use the tools provided to you to query the knowledge base.
+
 
 
 """.strip()
@@ -47,10 +73,10 @@ llm  = AzureChatOpenAI(
 )
 
 
-postgres_tools = PostgresTools()
+kb_tools = KnowledgeBaseTools()
 
 
-tools= postgres_tools.tools
+tools= kb_tools.tools()
 llm_with_tools = llm.bind_tools(tools)
 
 # Define Nodes

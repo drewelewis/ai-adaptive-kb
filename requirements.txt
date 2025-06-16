@@ -23,4 +23,6 @@ langchain_community
 
 asyncio
 psycopg2
+mkdocs
+python-slugify
 
