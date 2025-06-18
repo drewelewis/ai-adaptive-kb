@@ -51,7 +51,28 @@ class KnowledgeBaseTools():
             knowledge_base=kb_Operations.insert_knowledge_base(knowledge_base)
             return knowledge_base
         
-    
+    class KnowledgeBaseGetArticleHierarchy(BaseTool):
+        name: str = "KnowledgeBaseGetArticleHierarchy"
+        description: str = """
+            useful for when you need to get all articles in a Knowledge Base as a hierarchy.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseGetArticleHierarchyInputModel(BaseModel):
+            knowledge_base_id: str = Field(description="knowledge_base_id")
+
+            # Validation method to check parameter input from agent
+            @field_validator("knowledge_base_id")
+            def validate_query_param(knowledge_base_id):
+                if not knowledge_base_id:
+                    raise ValueError("KnowledgeBaseGetArticleHierarchyInputModel error: knowledge_base_id parameter is empty")
+                else:
+                    return knowledge_base_id
+                
+        def _run(self, knowledge_base_id: str) -> str:
+            articles=kb_Operations.get_article_hierarchy(knowledge_base_id)
+            return str(articles)
+          
     class KnowledgeBaseGetRootLevelArticles(BaseTool):
         name: str = "KnowledgeBaseGetRootLevelArticles"
         description: str = """
@@ -74,6 +95,37 @@ class KnowledgeBaseTools():
             articles=kb_Operations.get_root_level_articles(knowledge_base_id)
             return str(articles)
 
+    class KnowledgeBaseGetArticleByArticleId(BaseTool):
+        name: str = "KnowledgeBaseGetArticleByArticleId"
+        description: str = """
+            useful for when you need get articles in a Knowledge Base for a given article_id.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseGetArticleByArticleIdInputModel(BaseModel):
+            article_id: str = Field(description="article_id")
+            knowledge_base_id: str = Field(description="knowledge_base_id")
+
+            # Validation method to check parameter input from agent
+            @field_validator("article_id")
+            def validate_query_param(article_id):
+                if not article_id:
+                    raise ValueError("KnowledgeBaseGetArticleByArticleId error: article_id parameter is empty")
+                else:
+                    return article_id
+            
+            @field_validator("knowledge_base_id")
+            def validate_query_param(knowledge_base_id):
+                if not knowledge_base_id:
+                    raise ValueError("KnowledgeBaseGetArticleByArticleId error: knowledge_base_id parameter is empty")
+                else:
+                    return knowledge_base_id
+                    
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseGetArticleByArticleIdInputModel
+    
+        def _run(self, knowledge_base_id: str, article_id: str) -> str:
+            article=kb_Operations.get_article_by_id(knowledge_base_id, article_id)
+            return str(article)
 
     class KnowledgeBaseGetChildArticlesByParentIds(BaseTool):
         name: str = "KnowledgeBaseGetChildArticlesByParentIds"
@@ -174,7 +226,7 @@ class KnowledgeBaseTools():
         
     # Init above tools and make available
     def __init__(self) -> None:
-        self._tools = [self. KnowledgeBaseGetKnowledgeBases(), self.KnowledgeBaseInsertKnowledgeBase(), self.KnowledgeBaseGetRootLevelArticles(), self.KnowledgeBaseGetChildArticlesByParentIds(), self.KnowledgeBaseInsertArticle(), self.KnowledgeBaseUpdateArticle()]
+        self._tools = [self. KnowledgeBaseGetKnowledgeBases(), self.KnowledgeBaseInsertKnowledgeBase(), self.KnowledgeBaseGetRootLevelArticles(), self.KnowledgeBaseGetChildArticlesByParentIds(), self.KnowledgeBaseInsertArticle(), self.KnowledgeBaseUpdateArticle(), self.KnowledgeBaseGetArticleHierarchy(), self.KnowledgeBaseGetArticleByArticleId()]
 
     # Method to get tools (for ease of use, made so class works similarly to LangChain toolkits)
     def tools(self) -> List[BaseTool]:

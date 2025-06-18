@@ -20,7 +20,7 @@ class KnowledgeBase():
         author_id: int = Field(..., description="ID of the author (user)")
 
             
-
+    
 
 
     # Init above tools and make available

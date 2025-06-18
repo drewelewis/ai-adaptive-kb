@@ -81,3 +81,42 @@ INSERT INTO users (name, email) VALUES
 ('Alice Smith', 'alice@example.com'),
 ('Bob Johnson', 'bob@example.com');
 
+-- Function: get_article_hierarchy(knowledge_base_id integer)
+-- Returns the full article hierarchy (title and author) for a given knowledge_base_id
+CREATE OR REPLACE FUNCTION get_article_hierarchy(knowledge_base_id integer)
+RETURNS TABLE(
+    id integer,
+    title text,
+    author text,
+    parent_id integer
+) AS $$
+WITH RECURSIVE article_hierarchy AS (
+    SELECT
+        a.id,
+        a.title,
+        u.name AS author,
+        a.parent_id
+    FROM articles a
+    LEFT JOIN users u ON a.author_id = u.id
+    WHERE a.knowledge_base_id = knowledge_base_id AND a.parent_id IS NULL AND a.is_active = TRUE
+
+    UNION ALL
+
+    SELECT
+        a.id,
+        a.title,
+        u.name AS author,
+        a.parent_id
+    FROM articles a
+    LEFT JOIN users u ON a.author_id = u.id
+    INNER JOIN article_hierarchy ah ON a.parent_id = ah.id
+    WHERE a.knowledge_base_id = knowledge_base_id AND a.is_active = TRUE
+)
+SELECT id, title, author, parent_id
+FROM article_hierarchy
+ORDER BY parent_id NULLS FIRST, id;
+$$ LANGUAGE sql STABLE;
+
+-- Usage:
+-- SELECT * FROM get_article_hierarchy(1);
+

@@ -50,6 +50,21 @@ class KnowledgeBaseOperations:
         except Exception as e:
             print(f"An error occurred with KnowledgeBaseOperations.get_knowledge_base_by_id: {e}")
             return None
+    
+    def get_article_by_id(self, knowledge_base_id: str, article_id: str) -> Optional[Article.BaseModel]:
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    sql = "SELECT * FROM articles WHERE knowledge_base_id = %s and id= %s;"
+                    cur.execute(sql, (knowledge_base_id,article_id,))
+                    article = cur.fetchone()
+                    if article:
+                        return Article.BaseModel(**article)
+                    else:
+                        return None
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.get_article_by_id: {e}")
+            return None   
         
     def insert_knowledge_base(self, knowledge_base: KnowledgeBase.InsertModel) -> int:
         try:
@@ -65,7 +80,23 @@ class KnowledgeBaseOperations:
         except Exception as e:
             print(f"An error occurred with KnowledgeBaseOperations.insert_knowledge_base: {e}")
             return None
-        
+
+        # get article_hierarchy function is a recursive function that returns the hierarchy of articles in a knowledge base
+    def get_article_hierarchy(self, knowledge_base_id: str) -> List[Article.HierarchyModel]:
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    sql = "SELECT * FROM get_article_hierarchy(%s);"
+                    cur.execute(sql, (knowledge_base_id,))
+                    articles = cur.fetchall()
+                    return articles
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.get_article_hierarchy: {e}")
+            return []
+        finally:
+            if conn:
+                conn.close()
+
 
     def get_root_level_articles(self, knowledge_base_id: str) -> list:
         try:
@@ -102,36 +133,55 @@ class KnowledgeBaseOperations:
                     sql = """INSERT INTO articles (knowledge_base_id,title, content, author_id, parent_id)
                              VALUES (%s, %s, %s, %s, %s) RETURNING id;"""
                     cur.execute(sql, (knowledge_base_id, article.title, article.content, article.author_id, article.parent_id))
-                    article = cur.fetchone()
-                    if article:
-                        return article
+                    conn.commit()
+                    new_article_id = cur.fetchone()
+                    if new_article_id:
+                        new_article = Article.BaseModel(
+                            id=new_article_id[0],
+                            knowledge_base_id=knowledge_base_id,
+                            title=article.title,
+                            content=article.content,
+                            author_id=article.author_id,
+                            parent_id=article.parent_id
+                        )
+                    if new_article:
+                        return new_article
                     else:
                         return None
                 
         except Exception as e:
             print(f"An error occurred with KnowledgeBaseOperations.insert_article: {e}")
-            return None  
+            return None
+        finally:
+            if conn:
+                conn.close()  
 
-    def update_article(self, knowledge_base_id: str, article: Article.InsertModel) -> Article.BaseModel:
+    def update_article(self, knowledge_base_id: str, article: Article.UpdateModel) -> Article.BaseModel:
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cur:
                     # Update the article in the database
-                    sql = """UPDATE article
+                    sql = """UPDATE articles
                              SET knowledge_base_id= %s, title = %s, content = %s, author_id = %s, parent_id = %s
                              WHERE id = %s RETURNING id;"""
                     
-                    cur.execute(sql, (knowledge_base_id,article.title, article.content, article.author_id, article.parent_id))
+                    cur.execute(sql, (knowledge_base_id,article.title, article.content, article.author_id, article.parent_id, article.id))
                     id = cur.fetchone()[0]
                     conn.commit()
-                    return article(
-                        id=id,
-                        knowledge_base_id=knowledge_base_id,
-                        title=article.title,
-                        content=article.content,
-                        author_id=article.author_id,
-                        parent_id=article.parent_id
-                    )
+                    article_id = cur.fetchone()
+                    if article_id:
+                        updated_article = Article.BaseModel(
+                            id=article_id,
+                            knowledge_base_id=knowledge_base_id,
+                            title=article.title,
+                            content=article.content,
+                            author_id=article.author_id,
+                            parent_id=article.parent_id
+                        )
+                    if updated_article:
+                        return updated_article
+                    else:
+                        return None
                 
         except Exception as e:
             print(f"An error occurred with KnowledgeBaseOperations.insert_article: {e}")

@@ -34,6 +34,12 @@ class Article():
         author_id: int = Field(..., description="ID of the author (user)")
         parent_id: Optional[int] = Field(None, description="ID of the parent article, if any")
 
+    class HierarchyModel(BaseModel):
+        knowledge_base_id: int = Field(..., description="ID of the knowledge base")
+        id: int = Field(..., description="ID of the article")
+        title: str = Field(..., description="Title of the article")
+        author: str = Field(..., description="Name of the author (user)")
+        parent_id: Optional[int] = Field(None, description="ID of the parent article, if any")
 
     # Init above tools and make available
     def __init__(self) -> None:
