@@ -20,54 +20,20 @@ from IPython.display import Image, display
 
 from utils.langgraph_utils import save_graph
 from dotenv import load_dotenv
-
+from prompts.knowledge_base_prompts import prompts
 from tools.knowledge_base_tools import KnowledgeBaseTools
  
 load_dotenv(override=True)
 current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-print("Today's date and time:", current_datetime)
 
 class GraphState(TypedDict):
-    # Messages have the type "list". The `add_messages` function
-    # in the annotation defines how this state key should be updated
-    # (in this case, it appends messages to the list, rather than overwriting them)
     messages: Annotated[list, add_messages]
+    recursions: int
+
+
 system_message="Today's date and time: " + current_datetime + "\n\n"
-system_message= system_message + """You are a knowledge base curation assistant.
-You will help the user to maintain, update, query, and create knowledge bases.
-Your primary goal is to maintain and update existing knowledge bases focusing on the structure and content of the knowledge base.
-You will need to make sure the knowledge base is chosen before proceeding with any other operations. 
-If you are unsure of what knowledge base to use, you will ask the user to clarify, never assume a knowledge base.
-Never create a new knowledge base without the user's approval.
-Never create articles in the knowledge base without the user's approval.
-
-Important: Your first action is to to always list the existing knowledge bases and ask the user to choose one or create a new one.
-
-For existing knowledge bases, here are your responsibilities:
-- If the user asks for details about a knowledge base, you will provide the full hierarchy of articles in the knowledge base at full depth.
-- Display the hierarchy as a bulleted list, and include the database id of each article.
-- You will help the user define the hierarchical structure of the knowledge base.
-- You will take the time to understand the exisiting knowledge base and its structure before making any changes.
-- If you are unaware of the existing knowledge base, you will query
-- Articles can have parent articles and child articles.
-- Articles at the top level of the hierarcy are called root level articles.
-- For most knowledge bases, the root level should have at least 4 or 5 articles, with a maximum of 30.
-- Articles at the first 2 levels can be treated as categories and subcategories if it is appropriate.
-- Articles at the third level and below will go from general to specific.
-- You will help the user to find articles in the knowledge base.
-- You will get articles in the knowledge base by their id, and return all the details of the article.
-- You will help the user create new articles in the knowledge base.
-- You will help the user update existing articles in the knowledge base.
-- You will insert new articles into the knowledge base when asked by the user.
-- When inserting new articles, you will use the user id of 1.
-- Before inserting new articles, you will suggest title and content of the article.
-- Articles will be formatted in markdown.
-- Before inserting new articles, you will need to know the exisiting articles in the knowledge base in order to avoid duplicates and to preserve the structure of the knowledge base.
-- You will use the tools provided to you to query the knowledge base.
-
-You must always explicitly ask the user for confirmation before creating a new knowledge base or article, and only proceed if the user clearly approves. If the user does not give clear approval, do not proceed with creation.
-""".strip()
+system_message= system_message + prompts.master_prompt()
 
 llm  = AzureChatOpenAI(
     azure_endpoint=os.getenv('OPENAI_API_ENDPOINT'),
@@ -84,8 +50,11 @@ tools= kb_tools.tools()
 llm_with_tools = llm.bind_tools(tools)
 
 def stream_graph_updates(role: str, content: str):
+    config = {"configurable": {"thread_id": "1"}}
     events = graph.stream(
-        {"messages": [{"role": role, "content": content}]},
+        {
+            "messages": [{"role": role, "content": content}],
+            "recursions": 0},
         config,
         stream_mode="values",
     )
@@ -97,9 +66,33 @@ def stream_graph_updates(role: str, content: str):
         last_message=event["messages"][-1]
     return last_message
 
+
 # Define Nodes
 def chat_node(state: GraphState):
-    return {"messages": [llm_with_tools.invoke(state["messages"])]}
+
+    # Extract the current list of messages from the state
+    messages = state["messages"]
+    recursions= state["recursions"]
+
+    # Print the current state for debugging
+    # print("chat_node: Current state:")
+    # print(f"  - Messages: {messages}")
+    print(f"  - Recursions: {recursions}")
+
+    # Print the incoming messages for debugging
+    # print("chat_node: Received messages:")
+    # for msg in messages:
+        # print(f"  - {msg}")
+
+    # Invoke the LLM with tools, passing the current messages
+    response = llm_with_tools.invoke(messages)
+
+    # Print the response from the LLM for debugging
+    # print("chat_node: LLM response:")
+    print(response.content)
+
+    # Return the updated state with the new message appended
+    return {"messages": [response], "recursions": recursions + 1}
 
 
 # Init Graph
@@ -127,16 +120,6 @@ def build_graph():
     return graph
 
 graph=build_graph()
-try:
-    config = {
-    "configurable": {
-        "thread_id": "1",
-        "recursion_limit": 100  # Increased recursion limit for LangGraph
-        }
-    }
-    graph.invoke(input=stream_graph_updates("system",system_message),config=config)
-except Exception as e:
-    print("An error occurred:", e)
 
 
 

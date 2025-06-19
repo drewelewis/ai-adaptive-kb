@@ -87,6 +87,7 @@ class KnowledgeBaseOperations:
             with self._get_connection() as conn:
                 with conn.cursor() as cur:
                     sql = "SELECT * FROM get_article_hierarchy(%s);"
+                    print(f"Executing SQL: {sql} with knowledge_base_id: {knowledge_base_id}")
                     cur.execute(sql, (knowledge_base_id,))
                     articles = cur.fetchall()
                     return articles

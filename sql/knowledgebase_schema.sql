@@ -98,7 +98,7 @@ WITH RECURSIVE article_hierarchy AS (
         a.parent_id
     FROM articles a
     LEFT JOIN users u ON a.author_id = u.id
-    WHERE a.knowledge_base_id = knowledge_base_id AND a.parent_id IS NULL AND a.is_active = TRUE
+    WHERE a.knowledge_base_id = get_article_hierarchy.knowledge_base_id AND a.parent_id IS NULL AND a.is_active = TRUE
 
     UNION ALL
 
@@ -110,7 +110,7 @@ WITH RECURSIVE article_hierarchy AS (
     FROM articles a
     LEFT JOIN users u ON a.author_id = u.id
     INNER JOIN article_hierarchy ah ON a.parent_id = ah.id
-    WHERE a.knowledge_base_id = knowledge_base_id AND a.is_active = TRUE
+    WHERE a.knowledge_base_id = get_article_hierarchy.knowledge_base_id AND a.is_active = TRUE
 )
 SELECT id, title, author, parent_id
 FROM article_hierarchy
