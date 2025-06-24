@@ -35,7 +35,31 @@ class KnowledgeBaseOperations:
         except Exception as e:
             print(f"An error occurred with KnowledgeBaseOperations.get_knowledge_bases: {e}")
             return []
-    
+    # update knowledge base by id
+    def update_knowledge_base(self, knowledge_base: KnowledgeBase.UpdateModel) -> Optional[KnowledgeBase.BaseModel]:
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    sql = """UPDATE knowledge_base
+                             SET name = %s, description = %s, author_id = %s
+                             WHERE id = %s RETURNING id;"""
+                    cur.execute(sql, (knowledge_base.name, knowledge_base.description, knowledge_base.author_id, knowledge_base.id))
+                    id = cur.fetchone()[0]
+                    conn.commit()
+                    updated_knowledge_base = KnowledgeBase.BaseModel(
+                        id=id,
+                        name=knowledge_base.name,
+                        description=knowledge_base.description,
+                        author_id=knowledge_base.author_id
+                    )
+                    return updated_knowledge_base
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.update_knowledge_base: {e}")
+            return None
+        finally:
+            if conn:
+                conn.close()    
+        
     def get_knowledge_base_by_id(self, knowledge_base_id: str) -> Optional[KnowledgeBase.BaseModel]:
         try:
             with self._get_connection() as conn:
@@ -167,9 +191,9 @@ class KnowledgeBaseOperations:
                              WHERE id = %s RETURNING id;"""
                     
                     cur.execute(sql, (knowledge_base_id,article.title, article.content, article.author_id, article.parent_id, article.id))
-                    id = cur.fetchone()[0]
+                    article_id = cur.fetchone()[0]
                     conn.commit()
-                    article_id = cur.fetchone()
+
                     if article_id:
                         updated_article = Article.BaseModel(
                             id=article_id,

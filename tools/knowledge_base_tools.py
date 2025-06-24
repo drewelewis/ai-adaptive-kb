@@ -50,7 +50,33 @@ class KnowledgeBaseTools():
         def _run(self, knowledge_base: KnowledgeBase.InsertModel) -> KnowledgeBase.BaseModel:
             knowledge_base=kb_Operations.insert_knowledge_base(knowledge_base)
             return knowledge_base
+    
+    # KonowledgeBase Update KnowledgeBase
+    class KnowledgeBaseUpdateKnowledgeBase(BaseTool):
+        name: str = "KnowledgeBaseUpdateKnowledgeBase"
+        description: str = """
+            useful for when you need to update a Knowledge Base.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseUpdateKnowledgeBaseInputModel(BaseModel):
+            knowledge_base: KnowledgeBase.UpdateModel = Field(description="knowledge_base")
+
+            # Validation method to check parameter input from agent
+            @field_validator("knowledge_base")
+            def validate_query_param(knowledge_base):
+                if not knowledge_base:
+                    raise ValueError("KnowledgeBaseUpdateKnowledgeBase error: knowledge_base parameter is empty")
+                else:
+                    return knowledge_base
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseUpdateKnowledgeBaseInputModel
+    
+        def _run(self, knowledge_base: KnowledgeBase.UpdateModel) -> KnowledgeBase.BaseModel:
+            knowledge_base=kb_Operations.update_knowledge_base(knowledge_base)
+            return knowledge_base
         
+
     class KnowledgeBaseGetArticleHierarchy(BaseTool):
         name: str = "KnowledgeBaseGetArticleHierarchy"
         description: str = """
@@ -226,7 +252,7 @@ class KnowledgeBaseTools():
         
     # Init above tools and make available
     def __init__(self) -> None:
-        self._tools = [self. KnowledgeBaseGetKnowledgeBases(), self.KnowledgeBaseInsertKnowledgeBase(), self.KnowledgeBaseGetRootLevelArticles(), self.KnowledgeBaseGetChildArticlesByParentIds(), self.KnowledgeBaseInsertArticle(), self.KnowledgeBaseUpdateArticle(), self.KnowledgeBaseGetArticleHierarchy(), self.KnowledgeBaseGetArticleByArticleId()]
+        self._tools = [self. KnowledgeBaseGetKnowledgeBases(), self.KnowledgeBaseInsertKnowledgeBase(), self.KnowledgeBaseGetRootLevelArticles(), self.KnowledgeBaseGetChildArticlesByParentIds(), self.KnowledgeBaseInsertArticle(), self.KnowledgeBaseUpdateArticle(), self.KnowledgeBaseGetArticleHierarchy(), self.KnowledgeBaseGetArticleByArticleId(), self.KnowledgeBaseUpdateKnowledgeBase()    ]
 
     # Method to get tools (for ease of use, made so class works similarly to LangChain toolkits)
     def tools(self) -> List[BaseTool]:

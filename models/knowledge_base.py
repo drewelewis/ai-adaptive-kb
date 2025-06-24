@@ -8,7 +8,7 @@ load_dotenv(override=True)
 class KnowledgeBase():
 
     class BaseModel(BaseModel):
-        knowledge_base_id: str = Field(..., description="ID of the knowledge base")
+        id: int = Field(..., description="ID of the knowledge base")
         name: str = Field(..., description="Name of the knowledge base")
         description: str = Field(..., description="Description of the knowledge base")
         author_id: int = Field(..., description="ID of the author (user)")
@@ -19,7 +19,12 @@ class KnowledgeBase():
         description: str = Field(..., description="Content of the article")
         author_id: int = Field(..., description="ID of the author (user)")
 
-            
+    class UpdateModel(BaseModel):
+        id: int = Field(..., description="ID of the knowledge base")
+        name: str = Field(..., description="Name of the knowledge base")
+        description: str = Field(..., description="Description of the knowledge base")
+        author_id: int = Field(..., description="ID of the author (user)")
+        is_active: bool = Field(..., description="Is the knowledge base active?")       
     
 
 
