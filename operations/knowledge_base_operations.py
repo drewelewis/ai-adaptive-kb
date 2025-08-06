@@ -5,6 +5,7 @@ from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 from models.article import Article
 from models.knowledge_base import KnowledgeBase
+from models.tags import Tags
 
 load_dotenv(override=True)
 
@@ -211,6 +212,280 @@ class KnowledgeBaseOperations:
         except Exception as e:
             print(f"An error occurred with KnowledgeBaseOperations.insert_article: {e}")
             return None  
+
+    # =============================================
+    # TAG OPERATIONS
+    # =============================================
+    
+    def get_tags_by_knowledge_base(self, knowledge_base_id: str) -> List[Tags.BaseModel]:
+        """Get all tags for a specific knowledge base"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    sql = "SELECT * FROM tags WHERE knowledge_base_id = %s ORDER BY name;"
+                    cur.execute(sql, (knowledge_base_id,))
+                    tags = cur.fetchall()
+                    return [Tags.BaseModel(**tag) for tag in tags]
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.get_tags_by_knowledge_base: {e}")
+            return []
+
+    def get_tag_by_id(self, tag_id: str) -> Optional[Tags.BaseModel]:
+        """Get a specific tag by ID"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    sql = "SELECT * FROM tags WHERE id = %s;"
+                    cur.execute(sql, (tag_id,))
+                    tag = cur.fetchone()
+                    if tag:
+                        return Tags.BaseModel(**tag)
+                    else:
+                        return None
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.get_tag_by_id: {e}")
+            return None
+
+    def get_tag_by_name(self, knowledge_base_id: str, tag_name: str) -> Optional[Tags.BaseModel]:
+        """Get a tag by name within a knowledge base"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    sql = "SELECT * FROM tags WHERE knowledge_base_id = %s AND name = %s;"
+                    cur.execute(sql, (knowledge_base_id, tag_name.lower()))
+                    tag = cur.fetchone()
+                    if tag:
+                        return Tags.BaseModel(**tag)
+                    else:
+                        return None
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.get_tag_by_name: {e}")
+            return None
+
+    def insert_tag(self, tag: Tags.InsertModel) -> Optional[Tags.BaseModel]:
+        """Insert a new tag"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Check if tag already exists for this knowledge base
+                    existing_tag = self.get_tag_by_name(str(tag.knowledge_base_id), tag.name)
+                    if existing_tag:
+                        print(f"Tag '{tag.name}' already exists in knowledge base {tag.knowledge_base_id}")
+                        return existing_tag
+                    
+                    sql = """INSERT INTO tags (name, knowledge_base_id)
+                             VALUES (%s, %s) RETURNING id;"""
+                    cur.execute(sql, (tag.name, tag.knowledge_base_id))
+                    tag_id = cur.fetchone()[0]
+                    conn.commit()
+                    
+                    new_tag = Tags.BaseModel(
+                        id=tag_id,
+                        name=tag.name,
+                        knowledge_base_id=tag.knowledge_base_id
+                    )
+                    return new_tag
+                    
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.insert_tag: {e}")
+            return None
+
+    def update_tag(self, tag: Tags.UpdateModel) -> Optional[Tags.BaseModel]:
+        """Update an existing tag"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Check if new name already exists for this knowledge base (excluding current tag)
+                    sql_check = "SELECT id FROM tags WHERE knowledge_base_id = %s AND name = %s AND id != %s;"
+                    cur.execute(sql_check, (tag.knowledge_base_id, tag.name, tag.id))
+                    if cur.fetchone():
+                        print(f"Tag name '{tag.name}' already exists in knowledge base {tag.knowledge_base_id}")
+                        return None
+                    
+                    sql = """UPDATE tags
+                             SET name = %s, knowledge_base_id = %s
+                             WHERE id = %s RETURNING id;"""
+                    cur.execute(sql, (tag.name, tag.knowledge_base_id, tag.id))
+                    updated_id = cur.fetchone()
+                    if updated_id:
+                        conn.commit()
+                        updated_tag = Tags.BaseModel(
+                            id=tag.id,
+                            name=tag.name,
+                            knowledge_base_id=tag.knowledge_base_id
+                        )
+                        return updated_tag
+                    else:
+                        return None
+                        
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.update_tag: {e}")
+            return None
+
+    def delete_tag(self, tag_id: str) -> bool:
+        """Delete a tag and all its article associations"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Delete tag (article_tags will be deleted automatically due to CASCADE)
+                    sql = "DELETE FROM tags WHERE id = %s;"
+                    cur.execute(sql, (tag_id,))
+                    conn.commit()
+                    return cur.rowcount > 0
+                    
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.delete_tag: {e}")
+            return False
+
+    # =============================================
+    # ARTICLE-TAG RELATIONSHIP OPERATIONS
+    # =============================================
+
+    def get_tags_for_article(self, article_id: str) -> List[Tags.BaseModel]:
+        """Get all tags associated with an article"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    sql = """SELECT t.* FROM tags t
+                             INNER JOIN article_tags at ON t.id = at.tag_id
+                             WHERE at.article_id = %s
+                             ORDER BY t.name;"""
+                    cur.execute(sql, (article_id,))
+                    tags = cur.fetchall()
+                    return [Tags.BaseModel(**tag) for tag in tags]
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.get_tags_for_article: {e}")
+            return []
+
+    def get_articles_for_tag(self, tag_id: str) -> List[Article.BaseModel]:
+        """Get all articles associated with a tag"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    sql = """SELECT a.* FROM articles a
+                             INNER JOIN article_tags at ON a.id = at.article_id
+                             WHERE at.tag_id = %s AND a.is_active = TRUE
+                             ORDER BY a.title;"""
+                    cur.execute(sql, (tag_id,))
+                    articles = cur.fetchall()
+                    return [Article.BaseModel(**article) for article in articles]
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.get_articles_for_tag: {e}")
+            return []
+
+    def add_tag_to_article(self, article_id: str, tag_id: str) -> bool:
+        """Add a tag to an article"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Check if relationship already exists
+                    sql_check = "SELECT 1 FROM article_tags WHERE article_id = %s AND tag_id = %s;"
+                    cur.execute(sql_check, (article_id, tag_id))
+                    if cur.fetchone():
+                        print(f"Tag {tag_id} is already associated with article {article_id}")
+                        return True
+                    
+                    sql = "INSERT INTO article_tags (article_id, tag_id) VALUES (%s, %s);"
+                    cur.execute(sql, (article_id, tag_id))
+                    conn.commit()
+                    return True
+                    
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.add_tag_to_article: {e}")
+            return False
+
+    def remove_tag_from_article(self, article_id: str, tag_id: str) -> bool:
+        """Remove a tag from an article"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    sql = "DELETE FROM article_tags WHERE article_id = %s AND tag_id = %s;"
+                    cur.execute(sql, (article_id, tag_id))
+                    conn.commit()
+                    return cur.rowcount > 0
+                    
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.remove_tag_from_article: {e}")
+            return False
+
+    def set_article_tags(self, article_id: str, tag_ids: List[str]) -> bool:
+        """Set all tags for an article (replaces existing tags)"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Remove all existing tags for this article
+                    sql_delete = "DELETE FROM article_tags WHERE article_id = %s;"
+                    cur.execute(sql_delete, (article_id,))
+                    
+                    # Add new tags
+                    if tag_ids:
+                        sql_insert = "INSERT INTO article_tags (article_id, tag_id) VALUES (%s, %s);"
+                        for tag_id in tag_ids:
+                            cur.execute(sql_insert, (article_id, tag_id))
+                    
+                    conn.commit()
+                    return True
+                    
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.set_article_tags: {e}")
+            return False
+
+    def get_tags_with_usage_count(self, knowledge_base_id: str) -> List[Tags.TagWithUsageModel]:
+        """Get all tags with their usage count (how many articles use each tag)"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    sql = """SELECT t.id, t.name, t.knowledge_base_id, 
+                                    COALESCE(COUNT(at.article_id), 0) as usage_count
+                             FROM tags t
+                             LEFT JOIN article_tags at ON t.id = at.tag_id
+                             LEFT JOIN articles a ON at.article_id = a.id AND a.is_active = TRUE
+                             WHERE t.knowledge_base_id = %s
+                             GROUP BY t.id, t.name, t.knowledge_base_id
+                             ORDER BY usage_count DESC, t.name;"""
+                    cur.execute(sql, (knowledge_base_id,))
+                    tags = cur.fetchall()
+                    return [Tags.TagWithUsageModel(**tag) for tag in tags]
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.get_tags_with_usage_count: {e}")
+            return []
+
+    def search_articles_by_tags(self, knowledge_base_id: str, tag_names: List[str], match_all: bool = False) -> List[Article.BaseModel]:
+        """Search articles by tag names. If match_all=True, articles must have ALL tags; if False, articles must have ANY tag"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # Normalize tag names to lowercase
+                    tag_names = [name.lower() for name in tag_names]
+                    
+                    if match_all:
+                        # Articles must have ALL specified tags
+                        sql = """SELECT DISTINCT a.* FROM articles a
+                                 INNER JOIN article_tags at ON a.id = at.article_id
+                                 INNER JOIN tags t ON at.tag_id = t.id
+                                 WHERE a.knowledge_base_id = %s AND a.is_active = TRUE 
+                                 AND t.name = ANY(%s)
+                                 GROUP BY a.id, a.knowledge_base_id, a.title, a.content, a.author_id, 
+                                         a.version, a.is_active, a.parent_id, a.created_at, a.updated_at, 
+                                         a.created_by, a.updated_by
+                                 HAVING COUNT(DISTINCT t.id) = %s
+                                 ORDER BY a.title;"""
+                        cur.execute(sql, (knowledge_base_id, tag_names, len(tag_names)))
+                    else:
+                        # Articles must have ANY of the specified tags
+                        sql = """SELECT DISTINCT a.* FROM articles a
+                                 INNER JOIN article_tags at ON a.id = at.article_id
+                                 INNER JOIN tags t ON at.tag_id = t.id
+                                 WHERE a.knowledge_base_id = %s AND a.is_active = TRUE 
+                                 AND t.name = ANY(%s)
+                                 ORDER BY a.title;"""
+                        cur.execute(sql, (knowledge_base_id, tag_names))
+                    
+                    articles = cur.fetchall()
+                    return [Article.BaseModel(**article) for article in articles]
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.search_articles_by_tags: {e}")
+            return []  
 
 # # Example usage:
 # ops = PostgresOperations()

@@ -6,6 +6,7 @@ from langchain_core.tools.base import ArgsSchema
 from pydantic import BaseModel, Field, field_validator
 from models.article import Article
 from models.knowledge_base import KnowledgeBase
+from models.tags import Tags
 
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -251,10 +252,347 @@ class KnowledgeBaseTools():
         def _run(self, knowledge_base_id: str, article: Article.UpdateModel) -> Article.BaseModel:
             article=kb_Operations.update_article(knowledge_base_id, article)
             return article
+
+    # =============================================
+    # TAG MANAGEMENT TOOLS
+    # =============================================
+    
+    class KnowledgeBaseGetTagsByKnowledgeBase(BaseTool):
+        name: str = "KnowledgeBaseGetTagsByKnowledgeBase"
+        description: str = """
+            useful for when you need to get all tags for a specific knowledge base.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseGetTagsByKnowledgeBaseInputModel(BaseModel):
+            knowledge_base_id: str = Field(description="knowledge_base_id")
+
+            @field_validator("knowledge_base_id")
+            def validate_query_param(cls, knowledge_base_id):
+                if not knowledge_base_id:
+                    raise ValueError("KnowledgeBaseGetTagsByKnowledgeBase error: knowledge_base_id parameter is empty")
+                return knowledge_base_id
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseGetTagsByKnowledgeBaseInputModel
+    
+        def _run(self, knowledge_base_id: str) -> List[Tags.BaseModel]:
+            tags = kb_Operations.get_tags_by_knowledge_base(knowledge_base_id)
+            return tags
+
+    class KnowledgeBaseGetTagById(BaseTool):
+        name: str = "KnowledgeBaseGetTagById"
+        description: str = """
+            useful for when you need to get a specific tag by its ID.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseGetTagByIdInputModel(BaseModel):
+            tag_id: str = Field(description="tag_id")
+
+            @field_validator("tag_id")
+            def validate_query_param(cls, tag_id):
+                if not tag_id:
+                    raise ValueError("KnowledgeBaseGetTagById error: tag_id parameter is empty")
+                return tag_id
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseGetTagByIdInputModel
+    
+        def _run(self, tag_id: str) -> Optional[Tags.BaseModel]:
+            tag = kb_Operations.get_tag_by_id(tag_id)
+            return tag
+
+    class KnowledgeBaseInsertTag(BaseTool):
+        name: str = "KnowledgeBaseInsertTag"
+        description: str = """
+            useful for when you need to create a new tag in a knowledge base.
+            The tag name will be automatically normalized to lowercase.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseInsertTagInputModel(BaseModel):
+            tag: Tags.InsertModel = Field(description="tag to insert")
+
+            @field_validator("tag")
+            def validate_query_param(cls, tag):
+                if not tag:
+                    raise ValueError("KnowledgeBaseInsertTag error: tag parameter is empty")
+                return tag
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseInsertTagInputModel
+    
+        def _run(self, tag: Tags.InsertModel) -> Optional[Tags.BaseModel]:
+            new_tag = kb_Operations.insert_tag(tag)
+            return new_tag
+
+    class KnowledgeBaseUpdateTag(BaseTool):
+        name: str = "KnowledgeBaseUpdateTag"
+        description: str = """
+            useful for when you need to update an existing tag.
+            The tag name will be automatically normalized to lowercase.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseUpdateTagInputModel(BaseModel):
+            tag: Tags.UpdateModel = Field(description="tag to update")
+
+            @field_validator("tag")
+            def validate_query_param(cls, tag):
+                if not tag:
+                    raise ValueError("KnowledgeBaseUpdateTag error: tag parameter is empty")
+                return tag
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseUpdateTagInputModel
+    
+        def _run(self, tag: Tags.UpdateModel) -> Optional[Tags.BaseModel]:
+            updated_tag = kb_Operations.update_tag(tag)
+            return updated_tag
+
+    class KnowledgeBaseDeleteTag(BaseTool):
+        name: str = "KnowledgeBaseDeleteTag"
+        description: str = """
+            useful for when you need to delete a tag. This will also remove the tag from all articles.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseDeleteTagInputModel(BaseModel):
+            tag_id: str = Field(description="tag_id to delete")
+
+            @field_validator("tag_id")
+            def validate_query_param(cls, tag_id):
+                if not tag_id:
+                    raise ValueError("KnowledgeBaseDeleteTag error: tag_id parameter is empty")
+                return tag_id
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseDeleteTagInputModel
+    
+        def _run(self, tag_id: str) -> bool:
+            result = kb_Operations.delete_tag(tag_id)
+            return result
+
+    # =============================================
+    # ARTICLE-TAG RELATIONSHIP TOOLS
+    # =============================================
+
+    class KnowledgeBaseGetTagsForArticle(BaseTool):
+        name: str = "KnowledgeBaseGetTagsForArticle"
+        description: str = """
+            useful for when you need to get all tags associated with a specific article.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseGetTagsForArticleInputModel(BaseModel):
+            article_id: str = Field(description="article_id")
+
+            @field_validator("article_id")
+            def validate_query_param(cls, article_id):
+                if not article_id:
+                    raise ValueError("KnowledgeBaseGetTagsForArticle error: article_id parameter is empty")
+                return article_id
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseGetTagsForArticleInputModel
+    
+        def _run(self, article_id: str) -> List[Tags.BaseModel]:
+            tags = kb_Operations.get_tags_for_article(article_id)
+            return tags
+
+    class KnowledgeBaseGetArticlesForTag(BaseTool):
+        name: str = "KnowledgeBaseGetArticlesForTag"
+        description: str = """
+            useful for when you need to get all articles that have a specific tag.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseGetArticlesForTagInputModel(BaseModel):
+            tag_id: str = Field(description="tag_id")
+
+            @field_validator("tag_id")
+            def validate_query_param(cls, tag_id):
+                if not tag_id:
+                    raise ValueError("KnowledgeBaseGetArticlesForTag error: tag_id parameter is empty")
+                return tag_id
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseGetArticlesForTagInputModel
+    
+        def _run(self, tag_id: str) -> List[Article.BaseModel]:
+            articles = kb_Operations.get_articles_for_tag(tag_id)
+            return articles
+
+    class KnowledgeBaseAddTagToArticle(BaseTool):
+        name: str = "KnowledgeBaseAddTagToArticle"
+        description: str = """
+            useful for when you need to add a tag to an article.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseAddTagToArticleInputModel(BaseModel):
+            article_id: str = Field(description="article_id")
+            tag_id: str = Field(description="tag_id")
+
+            @field_validator("article_id")
+            def validate_article_id(cls, article_id):
+                if not article_id:
+                    raise ValueError("KnowledgeBaseAddTagToArticle error: article_id parameter is empty")
+                return article_id
+
+            @field_validator("tag_id")
+            def validate_tag_id(cls, tag_id):
+                if not tag_id:
+                    raise ValueError("KnowledgeBaseAddTagToArticle error: tag_id parameter is empty")
+                return tag_id
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseAddTagToArticleInputModel
+    
+        def _run(self, article_id: str, tag_id: str) -> bool:
+            result = kb_Operations.add_tag_to_article(article_id, tag_id)
+            return result
+
+    class KnowledgeBaseRemoveTagFromArticle(BaseTool):
+        name: str = "KnowledgeBaseRemoveTagFromArticle"
+        description: str = """
+            useful for when you need to remove a tag from an article.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseRemoveTagFromArticleInputModel(BaseModel):
+            article_id: str = Field(description="article_id")
+            tag_id: str = Field(description="tag_id")
+
+            @field_validator("article_id")
+            def validate_article_id(cls, article_id):
+                if not article_id:
+                    raise ValueError("KnowledgeBaseRemoveTagFromArticle error: article_id parameter is empty")
+                return article_id
+
+            @field_validator("tag_id")
+            def validate_tag_id(cls, tag_id):
+                if not tag_id:
+                    raise ValueError("KnowledgeBaseRemoveTagFromArticle error: tag_id parameter is empty")
+                return tag_id
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseRemoveTagFromArticleInputModel
+    
+        def _run(self, article_id: str, tag_id: str) -> bool:
+            result = kb_Operations.remove_tag_from_article(article_id, tag_id)
+            return result
+
+    class KnowledgeBaseSetArticleTags(BaseTool):
+        name: str = "KnowledgeBaseSetArticleTags"
+        description: str = """
+            useful for when you need to set all tags for an article (replaces existing tags).
+            Provide a list of tag IDs to associate with the article.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseSetArticleTagsInputModel(BaseModel):
+            article_id: str = Field(description="article_id")
+            tag_ids: List[str] = Field(description="list of tag_ids to associate with the article")
+
+            @field_validator("article_id")
+            def validate_article_id(cls, article_id):
+                if not article_id:
+                    raise ValueError("KnowledgeBaseSetArticleTags error: article_id parameter is empty")
+                return article_id
+
+            @field_validator("tag_ids")
+            def validate_tag_ids(cls, tag_ids):
+                if tag_ids is None:
+                    return []
+                return tag_ids
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseSetArticleTagsInputModel
+    
+        def _run(self, article_id: str, tag_ids: List[str]) -> bool:
+            result = kb_Operations.set_article_tags(article_id, tag_ids)
+            return result
+
+    # =============================================
+    # ADVANCED TAG TOOLS
+    # =============================================
+
+    class KnowledgeBaseGetTagsWithUsageCount(BaseTool):
+        name: str = "KnowledgeBaseGetTagsWithUsageCount"
+        description: str = """
+            useful for when you need to get all tags with their usage statistics (how many articles use each tag).
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseGetTagsWithUsageCountInputModel(BaseModel):
+            knowledge_base_id: str = Field(description="knowledge_base_id")
+
+            @field_validator("knowledge_base_id")
+            def validate_query_param(cls, knowledge_base_id):
+                if not knowledge_base_id:
+                    raise ValueError("KnowledgeBaseGetTagsWithUsageCount error: knowledge_base_id parameter is empty")
+                return knowledge_base_id
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseGetTagsWithUsageCountInputModel
+    
+        def _run(self, knowledge_base_id: str) -> List[Tags.TagWithUsageModel]:
+            tags = kb_Operations.get_tags_with_usage_count(knowledge_base_id)
+            return tags
+
+    class KnowledgeBaseSearchArticlesByTags(BaseTool):
+        name: str = "KnowledgeBaseSearchArticlesByTags"
+        description: str = """
+            useful for when you need to search for articles by tag names.
+            Set match_all=True to find articles that have ALL specified tags.
+            Set match_all=False to find articles that have ANY of the specified tags.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseSearchArticlesByTagsInputModel(BaseModel):
+            knowledge_base_id: str = Field(description="knowledge_base_id")
+            tag_names: List[str] = Field(description="list of tag names to search for")
+            match_all: bool = Field(default=False, description="if True, articles must have ALL tags; if False, articles must have ANY tag")
+
+            @field_validator("knowledge_base_id")
+            def validate_knowledge_base_id(cls, knowledge_base_id):
+                if not knowledge_base_id:
+                    raise ValueError("KnowledgeBaseSearchArticlesByTags error: knowledge_base_id parameter is empty")
+                return knowledge_base_id
+
+            @field_validator("tag_names")
+            def validate_tag_names(cls, tag_names):
+                if not tag_names or len(tag_names) == 0:
+                    raise ValueError("KnowledgeBaseSearchArticlesByTags error: tag_names parameter is empty")
+                return tag_names
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseSearchArticlesByTagsInputModel
+    
+        def _run(self, knowledge_base_id: str, tag_names: List[str], match_all: bool = False) -> List[Article.BaseModel]:
+            articles = kb_Operations.search_articles_by_tags(knowledge_base_id, tag_names, match_all)
+            return articles
         
     # Init above tools and make available
     def __init__(self) -> None:
-        self._tools = [self. KnowledgeBaseGetKnowledgeBases(), self.KnowledgeBaseInsertKnowledgeBase(), self.KnowledgeBaseGetRootLevelArticles(), self.KnowledgeBaseGetChildArticlesByParentIds(), self.KnowledgeBaseInsertArticle(), self.KnowledgeBaseUpdateArticle(), self.KnowledgeBaseGetArticleHierarchy(), self.KnowledgeBaseGetArticleByArticleId(), self.KnowledgeBaseUpdateKnowledgeBase()    ]
+        self._tools = [
+            # Knowledge Base tools
+            self.KnowledgeBaseGetKnowledgeBases(), 
+            self.KnowledgeBaseInsertKnowledgeBase(), 
+            self.KnowledgeBaseUpdateKnowledgeBase(),
+            # Article tools
+            self.KnowledgeBaseGetRootLevelArticles(), 
+            self.KnowledgeBaseGetChildArticlesByParentIds(), 
+            self.KnowledgeBaseInsertArticle(), 
+            self.KnowledgeBaseUpdateArticle(), 
+            self.KnowledgeBaseGetArticleHierarchy(), 
+            self.KnowledgeBaseGetArticleByArticleId(),
+            # Tag management tools
+            self.KnowledgeBaseGetTagsByKnowledgeBase(),
+            self.KnowledgeBaseGetTagById(),
+            self.KnowledgeBaseInsertTag(),
+            self.KnowledgeBaseUpdateTag(),
+            self.KnowledgeBaseDeleteTag(),
+            # Article-Tag relationship tools
+            self.KnowledgeBaseGetTagsForArticle(),
+            self.KnowledgeBaseGetArticlesForTag(),
+            self.KnowledgeBaseAddTagToArticle(),
+            self.KnowledgeBaseRemoveTagFromArticle(),
+            self.KnowledgeBaseSetArticleTags(),
+            # Advanced tag tools
+            self.KnowledgeBaseGetTagsWithUsageCount(),
+            self.KnowledgeBaseSearchArticlesByTags()
+        ]
 
     # Method to get tools (for ease of use, made so class works similarly to LangChain toolkits)
     def tools(self) -> List[BaseTool]:
