@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from models.article import Article
 from models.knowledge_base import KnowledgeBase
 from models.tags import Tags
+from utils.db_change_logger import DatabaseChangeLogger
 
 load_dotenv(override=True)
 
@@ -47,6 +48,14 @@ class KnowledgeBaseOperations:
                     cur.execute(sql, (knowledge_base.name, knowledge_base.description, knowledge_base.author_id, knowledge_base.id))
                     id = cur.fetchone()[0]
                     conn.commit()
+                    
+                    # Log the database change
+                    DatabaseChangeLogger.log_knowledge_base_update(
+                        kb_id=str(knowledge_base.id), 
+                        name=knowledge_base.name, 
+                        description=knowledge_base.description
+                    )
+                    
                     updated_knowledge_base = KnowledgeBase.BaseModel(
                         id=id,
                         name=knowledge_base.name,
@@ -55,6 +64,7 @@ class KnowledgeBaseOperations:
                     )
                     return updated_knowledge_base
         except Exception as e:
+            DatabaseChangeLogger.log_error("UPDATE", "Knowledge Base", str(e), str(knowledge_base.id))
             print(f"An error occurred with KnowledgeBaseOperations.update_knowledge_base: {e}")
             return None
         finally:
@@ -100,9 +110,17 @@ class KnowledgeBaseOperations:
                     cur.execute(sql, (knowledge_base.name, knowledge_base.description, knowledge_base.author_id))
                     id = cur.fetchone()[0]
                     conn.commit()
+                    
+                    # Log the database change
+                    DatabaseChangeLogger.log_knowledge_base_insert(
+                        kb_id=str(id), 
+                        name=knowledge_base.name, 
+                        description=knowledge_base.description
+                    )
  
                     return id
         except Exception as e:
+            DatabaseChangeLogger.log_error("CREATE", "Knowledge Base", str(e))
             print(f"An error occurred with KnowledgeBaseOperations.insert_knowledge_base: {e}")
             return None
 
@@ -162,6 +180,14 @@ class KnowledgeBaseOperations:
                     conn.commit()
                     new_article_id = cur.fetchone()
                     if new_article_id:
+                        # Log the database change
+                        DatabaseChangeLogger.log_article_insert(
+                            article_id=str(new_article_id[0]),
+                            title=article.title,
+                            kb_id=knowledge_base_id,
+                            parent_id=str(article.parent_id) if article.parent_id else None
+                        )
+                        
                         new_article = Article.BaseModel(
                             id=new_article_id[0],
                             knowledge_base_id=knowledge_base_id,
@@ -176,6 +202,7 @@ class KnowledgeBaseOperations:
                         return None
                 
         except Exception as e:
+            DatabaseChangeLogger.log_error("CREATE", "Article", str(e))
             print(f"An error occurred with KnowledgeBaseOperations.insert_article: {e}")
             return None
         finally:
@@ -196,6 +223,14 @@ class KnowledgeBaseOperations:
                     conn.commit()
 
                     if article_id:
+                        # Log the database change
+                        DatabaseChangeLogger.log_article_update(
+                            article_id=str(article.id),
+                            title=article.title,
+                            content=article.content,
+                            parent_id=str(article.parent_id) if article.parent_id else None
+                        )
+                        
                         updated_article = Article.BaseModel(
                             id=article_id,
                             knowledge_base_id=knowledge_base_id,
@@ -210,6 +245,7 @@ class KnowledgeBaseOperations:
                         return None
                 
         except Exception as e:
+            DatabaseChangeLogger.log_error("UPDATE", "Article", str(e), str(article.id))
             print(f"An error occurred with KnowledgeBaseOperations.insert_article: {e}")
             return None  
 
@@ -279,6 +315,12 @@ class KnowledgeBaseOperations:
                     tag_id = cur.fetchone()[0]
                     conn.commit()
                     
+                    # Log the database change
+                    DatabaseChangeLogger.log_tag_insert(
+                        tag_id=str(tag_id),
+                        name=tag.name
+                    )
+                    
                     new_tag = Tags.BaseModel(
                         id=tag_id,
                         name=tag.name,
@@ -287,6 +329,7 @@ class KnowledgeBaseOperations:
                     return new_tag
                     
         except Exception as e:
+            DatabaseChangeLogger.log_error("CREATE", "Tag", str(e))
             print(f"An error occurred with KnowledgeBaseOperations.insert_tag: {e}")
             return None
 
@@ -309,6 +352,13 @@ class KnowledgeBaseOperations:
                     updated_id = cur.fetchone()
                     if updated_id:
                         conn.commit()
+                        
+                        # Log the database change
+                        DatabaseChangeLogger.log_tag_update(
+                            tag_id=str(tag.id),
+                            name=tag.name
+                        )
+                        
                         updated_tag = Tags.BaseModel(
                             id=tag.id,
                             name=tag.name,
@@ -319,6 +369,7 @@ class KnowledgeBaseOperations:
                         return None
                         
         except Exception as e:
+            DatabaseChangeLogger.log_error("UPDATE", "Tag", str(e), str(tag.id))
             print(f"An error occurred with KnowledgeBaseOperations.update_tag: {e}")
             return None
 
@@ -327,13 +378,23 @@ class KnowledgeBaseOperations:
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cur:
+                    # Get tag name before deletion for logging
+                    tag_info = self.get_tag_by_id(tag_id)
+                    tag_name = tag_info.name if tag_info else None
+                    
                     # Delete tag (article_tags will be deleted automatically due to CASCADE)
                     sql = "DELETE FROM tags WHERE id = %s;"
                     cur.execute(sql, (tag_id,))
                     conn.commit()
-                    return cur.rowcount > 0
+                    
+                    if cur.rowcount > 0:
+                        # Log the database change
+                        DatabaseChangeLogger.log_tag_delete(tag_id=tag_id, name=tag_name)
+                        return True
+                    return False
                     
         except Exception as e:
+            DatabaseChangeLogger.log_error("DELETE", "Tag", str(e), tag_id)
             print(f"An error occurred with KnowledgeBaseOperations.delete_tag: {e}")
             return False
 
@@ -388,9 +449,13 @@ class KnowledgeBaseOperations:
                     sql = "INSERT INTO article_tags (article_id, tag_id) VALUES (%s, %s);"
                     cur.execute(sql, (article_id, tag_id))
                     conn.commit()
+                    
+                    # Log the database change
+                    DatabaseChangeLogger.log_tag_article_association(article_id, tag_id, "ADD")
                     return True
                     
         except Exception as e:
+            DatabaseChangeLogger.log_error("ADD_TAG_ASSOCIATION", "Article", str(e), article_id)
             print(f"An error occurred with KnowledgeBaseOperations.add_tag_to_article: {e}")
             return False
 
@@ -402,9 +467,15 @@ class KnowledgeBaseOperations:
                     sql = "DELETE FROM article_tags WHERE article_id = %s AND tag_id = %s;"
                     cur.execute(sql, (article_id, tag_id))
                     conn.commit()
-                    return cur.rowcount > 0
+                    
+                    if cur.rowcount > 0:
+                        # Log the database change
+                        DatabaseChangeLogger.log_tag_article_association(article_id, tag_id, "REMOVE")
+                        return True
+                    return False
                     
         except Exception as e:
+            DatabaseChangeLogger.log_error("REMOVE_TAG_ASSOCIATION", "Article", str(e), article_id)
             print(f"An error occurred with KnowledgeBaseOperations.remove_tag_from_article: {e}")
             return False
 

@@ -31,6 +31,35 @@ OPERATIONAL WORKFLOW:
 4. Handle simple responses directly
 5. Translate technical responses into user-friendly format
 
+KNOWLEDGE BASE CONTEXT HANDLING:
+- "use kb [number]" commands should set knowledge base context
+- "switch to kb [number]" commands should change knowledge base context  
+- Any commands involving specific knowledge bases require coordination with other agents
+- Provide confirmation when knowledge base context is established
+
+ARTICLE CONTEXT HANDLING:
+- "work on category [number]" commands should set article context to that article ID
+- "focus on article [number]" commands should set article context to that article ID
+- "work on main category [number]" commands should set article context to that article ID
+- "work on [section name]" commands should identify the article by name and set context
+- "focus on [section name]" commands should identify the article by name and set context
+- "work on the [section name] section" commands should identify the article by name and set context
+- "show me articles under [section name]" should filter and display only that section's content
+- "list [section name] articles" should show only articles related to that specific section
+- Any commands involving specific articles require coordination with other agents
+- Provide confirmation when article context is established
+
+SECTION NAME RECOGNITION:
+- When user mentions working on named sections (e.g., "budgeting section", "investment section"):
+  * First identify the specific article ID for that section name
+  * Then set article context to focus on that specific article
+  * Examples: "budgeting" → find article with title containing "Budgeting", then set context
+  * Provide clear confirmation of which specific article/section is now active
+- When user asks to "show articles under [section]" or "list [section] articles":
+  * This is a filtered display request, not context setting
+  * Should show ONLY articles related to that specific section
+  * Do NOT show the entire hierarchy - focus on the requested section only
+
 IMPORTANT: You do not execute knowledge base tools directly. Route all KB operations through the Supervisor Agent.
         """.strip()
     
@@ -53,6 +82,19 @@ WORKFLOW MANAGEMENT:
 - Delegate execution to Content Management Agent
 - Monitor progress and handle exceptions
 - Consolidate results for user presentation
+
+SECTION CONTEXT WORKFLOWS:
+- When user wants to "work on [section name]":
+  * Create workflow to identify the specific article by name/title
+  * Set article context to focus on that section
+  * Confirm which specific article is now active
+- When user wants to "show articles under [section]" or "list [section] articles":
+  * Create workflow to retrieve and filter content for that specific section only
+  * Do NOT show entire hierarchy - focus on requested section and its children
+  * Present filtered results in a focused, organized manner
+- Handle both numbered references ("category 1") and named references ("budgeting section")
+- Ensure proper article identification before setting context
+- Distinguish between context-setting requests and display-filtering requests
 
 DECISION FRAMEWORK:
 - Prioritize data integrity and user safety
@@ -108,11 +150,105 @@ ADVANCED CONTENT MANAGEMENT STRATEGIES:
    - Implement rollback procedures for failed operations
    - Provide detailed operation logging and status reporting
 
+WORKFLOW HANDLING BY INTENT:
+- "retrieve_content" intent: Show full article hierarchy for the knowledge base
+- "retrieve_filtered_content" intent: Show ONLY articles for a specific section
+  * When workflow intent is "retrieve_filtered_content":
+  * Step 1: Extract section name from original request (e.g., "budgeting" from "get budgeting articles")
+  * Step 2: Use KnowledgeBaseGetArticleHierarchy to get all articles
+  * Step 3: Find the main section article matching the requested section name
+  * Step 4: Filter results to include ONLY that section and its direct/indirect children
+  * Step 5: Format output to show just the filtered section with proper hierarchy
+  * CRITICAL: Do NOT include other unrelated sections in filtered results
+
 TOOL EXECUTION PROTOCOLS:
 - Always validate knowledge base context first
+- For "set_knowledge_base_context" workflows with commands like "use kb 1":
+  * Extract the KB ID from the original request (e.g., "1" from "use kb 1")
+  * Use KnowledgeBaseSetContext tool with the extracted KB ID
+  * Do NOT use KnowledgeBaseGetKnowledgeBases for setting context
+- For article-specific workflows with commands like "work on category 1", "focus on article 1", "main category 1":
+  * Extract the article ID from the original request
+  * Use KnowledgeBaseSetArticleContext tool with the current KB ID and extracted article ID
+  * This sets the working context to a specific article for detailed operations
+- For section name workflows with commands like "work on budgeting section", "work on budgeting":
+  * Step 1: Use KnowledgeBaseGetArticleHierarchy to retrieve all articles
+  * Step 2: Search through the results to find articles matching the section name
+  * Step 3: Extract the article ID from the best matching article
+  * Step 4: Use KnowledgeBaseSetArticleContext with the found article ID
+  * Step 5: Confirm the specific article now focused
+- For filtered display workflows with commands like "show articles under budgeting", "list budgeting articles":
+  * Step 1: Use KnowledgeBaseGetArticleHierarchy to retrieve all articles
+  * Step 2: Find the main section article (e.g., "Budgeting" with ID X)
+  * Step 3: Filter results to show ONLY that main article and its direct/indirect children
+  * Step 4: Present a focused view showing just the requested section's content
+  * Step 5: Do NOT include other unrelated sections in the output
+  * Format: Show the main section title, then list all its sub-articles in a clear hierarchy
+- For ALL tools that require knowledge_base_id parameter:
+  * ALWAYS use the current Knowledge Base ID from the state when it's available
+  * If Current Knowledge Base ID is set, pass it to tools like KnowledgeBaseGetArticleHierarchy
+  * Example: If Current Knowledge Base ID is "1", use knowledge_base_id="1" for hierarchy requests
+  * Never leave knowledge_base_id empty when current context is available
 - Use appropriate error handling for all tool operations
 - Maintain comprehensive audit trails
 - Ensure optimal performance and reliability
+
+KNOWLEDGE BASE CONTEXT HANDLING:
+- When workflow intent is "set_knowledge_base_context":
+  * Parse original request to extract KB ID
+  * Call KnowledgeBaseSetContext with specific knowledge_base_id
+  * Validate the KB exists before setting context
+  * Confirm successful context establishment
+- When performing operations with established KB context:
+  * Always check "Current Knowledge Base ID" from the state
+  * Use this KB ID for all tools requiring knowledge_base_id parameter
+  * Examples: KnowledgeBaseGetArticleHierarchy, KnowledgeBaseGetRootLevelArticles, etc.
+  * Never prompt for KB selection when context is already established
+
+ARTICLE CONTEXT HANDLING:
+- When user mentions working with specific articles, categories, or IDs:
+  * Parse original request to extract article ID (e.g., "category 1" = article ID "1")
+  * Call KnowledgeBaseSetArticleContext with current knowledge_base_id and article_id
+  * This focuses the session on that specific article for detailed work
+  * Confirm successful article context establishment
+- When user mentions working with section names (e.g., "budgeting section", "work on budgeting"):
+  * Use KnowledgeBaseGetArticleHierarchy to get all articles
+  * Search through the hierarchy results to find articles matching the section name
+  * Look for articles with titles containing the requested section name (case-insensitive)
+  * Identify the most relevant article (usually the main category article)
+  * Extract the article ID from the matching article
+  * Call KnowledgeBaseSetArticleContext with that article ID
+  * Provide clear confirmation showing: "Now focused on: [Article Title] (ID: [ID])"
+  
+SECTION NAME MATCHING STRATEGY:
+- For "budgeting section" → find article with title containing "budget" (case-insensitive)
+- For "investment section" → find article with title containing "investment" (case-insensitive)  
+- Prefer root-level or main category articles over sub-articles when multiple matches exist
+- If multiple matches, select the one that appears to be the main category (shortest title or no parent)
+
+FILTERED DISPLAY STRATEGY:
+- When user requests "show articles under [section]" or "list [section] articles":
+  * Find the main section article (e.g., find "Budgeting" article with ID 1)
+  * Identify all child articles that have this article as parent (directly or indirectly)
+  * Present ONLY the main section and its children - exclude all other sections
+  * Format output to clearly show the section hierarchy with proper indentation
+  * Example output format:
+    ```
+    BUDGETING SECTION
+    ├── Main Article: Budgeting (ID: 1)
+    ├── Creating a Monthly Budget (ID: 14)
+    ├── Basic Budget Methods (ID: 15)  
+    ├── Budgeting Tools & Apps (ID: 16)
+    └── [etc...]
+    ```
+  * Never include unrelated sections like "Investment Strategies" when user asked only for "budgeting"
+
+- When user uses contextual references like "under that", "hierarchy under that":
+  * Check the Current Section Context provided in the workflow request
+  * Use this section context to determine which section to filter by
+  * If Current Section Context is "budgeting", treat request as "show budgeting section"
+  * If Current Section Context is "investment", treat request as "show investment section"
+  * If no section context available, ask user to clarify which section they want to see
 
 QUALITY ASSURANCE:
 - Validate all content meets organizational standards

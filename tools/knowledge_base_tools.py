@@ -1,5 +1,5 @@
 import os
-from typing import List, Optional, Type
+from typing import List, Optional, Type, Dict, Any
 from langchain_core.callbacks import  CallbackManagerForToolRun
 from langchain_core.tools import BaseTool
 from langchain_core.tools.base import ArgsSchema
@@ -24,9 +24,127 @@ class KnowledgeBaseTools():
         """.strip()
         return_direct: bool = False
 
-        def _run(self) -> List[KnowledgeBase.BaseModel]:
-            knowledge_bases=kb_Operations.get_knowledge_bases()
-            return knowledge_bases
+        def _run(self) -> str:
+            try:
+                # Get raw knowledge bases data
+                raw_kb_data = kb_Operations.get_knowledge_bases()
+                
+                # Parse and format the knowledge bases nicely
+                if isinstance(raw_kb_data, str) and raw_kb_data.startswith('['):
+                    # Handle string representation of list
+                    import ast
+                    try:
+                        # Convert string back to list (this is a workaround for the current implementation)
+                        kb_list_str = raw_kb_data
+                        # Extract meaningful data using string parsing since we get string representation
+                        lines = []
+                        lines.append("Available Knowledge Bases:")
+                        lines.append("")
+                        
+                        # Simple parsing to extract ID and name from the string
+                        import re
+                        id_matches = re.findall(r"'id': (\d+)", kb_list_str)
+                        name_matches = re.findall(r"'name': '([^']+)'", kb_list_str)
+                        desc_matches = re.findall(r"'description': '([^']+)'", kb_list_str)
+                        
+                        for i, (kb_id, name, desc) in enumerate(zip(id_matches, name_matches, desc_matches)):
+                            lines.append(f"  📚 ID: {kb_id}")
+                            lines.append(f"     Name: {name}")
+                            lines.append(f"     Description: {desc}")
+                            lines.append("")
+                        
+                        return "\n".join(lines)
+                        
+                    except Exception as parse_error:
+                        return f"Error parsing knowledge bases: {parse_error}\nRaw data: {raw_kb_data}"
+                
+                elif isinstance(raw_kb_data, list) and len(raw_kb_data) == 0:
+                    return "No knowledge bases found. You may want to create a new one."
+                
+                else:
+                    return f"Available Knowledge Bases:\n{raw_kb_data}"
+                    
+            except Exception as e:
+                return f"Error retrieving knowledge bases: {e}"
+
+    class KnowledgeBaseSetContext(BaseTool):
+        name: str = "KnowledgeBaseSetContext"
+        description: str = """
+            useful for when you need to set the current knowledge base context.
+            This establishes which knowledge base should be used for subsequent operations.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseSetContextInputModel(BaseModel):
+            knowledge_base_id: str = Field(description="knowledge_base_id to set as current context")
+
+            @field_validator("knowledge_base_id")
+            def validate_knowledge_base_id(cls, knowledge_base_id):
+                if not knowledge_base_id:
+                    raise ValueError("KnowledgeBaseSetContext error: knowledge_base_id parameter is empty")
+                return knowledge_base_id
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseSetContextInputModel
+    
+        def _run(self, knowledge_base_id: str) -> Dict[str, Any]:
+            # Validate that the knowledge base exists
+            kb = kb_Operations.get_knowledge_base_by_id(knowledge_base_id)
+            if not kb:
+                return {
+                    "success": False,
+                    "error": f"Knowledge base with ID {knowledge_base_id} not found"
+                }
+            
+            return {
+                "success": True,
+                "knowledge_base_id": knowledge_base_id,
+                "knowledge_base_name": kb.name,
+                "message": f"Knowledge base context set to: {kb.name} (ID: {knowledge_base_id})"
+            }
+
+    class KnowledgeBaseSetArticleContext(BaseTool):
+        name: str = "KnowledgeBaseSetArticleContext"
+        description: str = """
+            useful for when you need to set focus on a specific article within the knowledge base.
+            This establishes which article should be the current working context for detailed operations.
+            Use this when user says things like "work on article 1", "focus on category 1", "main article 1", etc.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseSetArticleContextInputModel(BaseModel):
+            article_id: str = Field(description="article_id to set as current context")
+            knowledge_base_id: str = Field(description="knowledge_base_id containing the article")
+
+            @field_validator("article_id")
+            def validate_article_id(cls, article_id):
+                if not article_id:
+                    raise ValueError("KnowledgeBaseSetArticleContext error: article_id parameter is empty")
+                return article_id
+
+            @field_validator("knowledge_base_id")
+            def validate_knowledge_base_id(cls, knowledge_base_id):
+                if not knowledge_base_id:
+                    raise ValueError("KnowledgeBaseSetArticleContext error: knowledge_base_id parameter is empty")
+                return knowledge_base_id
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseSetArticleContextInputModel
+    
+        def _run(self, knowledge_base_id: str, article_id: str) -> Dict[str, Any]:
+            # Validate that the article exists
+            article = kb_Operations.get_article_by_id(knowledge_base_id, article_id)
+            if not article:
+                return {
+                    "success": False,
+                    "error": f"Article with ID {article_id} not found in knowledge base {knowledge_base_id}"
+                }
+            
+            return {
+                "success": True,
+                "knowledge_base_id": knowledge_base_id,
+                "article_id": article_id,
+                "article_title": article.title,
+                "message": f"Article context set to: {article.title} (ID: {article_id})"
+            }
         
     class KnowledgeBaseInsertKnowledgeBase(BaseTool):
         name: str = "KnowledgeBaseInsertKnowledgeBase"
@@ -568,6 +686,8 @@ class KnowledgeBaseTools():
         self._tools = [
             # Knowledge Base tools
             self.KnowledgeBaseGetKnowledgeBases(), 
+            self.KnowledgeBaseSetContext(),
+            self.KnowledgeBaseSetArticleContext(),
             self.KnowledgeBaseInsertKnowledgeBase(), 
             self.KnowledgeBaseUpdateKnowledgeBase(),
             # Article tools

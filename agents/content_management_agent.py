@@ -96,7 +96,28 @@ Workflow Plan: {workflow_plan.get('description', '')}
 Steps: {[step['description'] for step in steps]}
 
 Current Knowledge Base ID: {state.get('knowledge_base_id', 'Not specified')}
+Current Section Context: {state.get('current_section', 'Not specified')}
 Original Request: {workflow_plan.get('original_request', 'Not provided')}
+
+CRITICAL INSTRUCTIONS FOR KNOWLEDGE BASE CONTEXT SETTING:
+- If intent is "set_knowledge_base_context" and original request contains "use kb X":
+  * Extract the KB ID (X) from the original request
+  * Use the KnowledgeBaseSetContext tool with knowledge_base_id="X"
+  * Do NOT use KnowledgeBaseGetKnowledgeBases for this purpose
+
+CRITICAL INSTRUCTIONS FOR CONTENT GAP ANALYSIS:
+- If intent is "analyze_content_gaps":
+  * First retrieve the complete hierarchy using KnowledgeBaseGetArticleHierarchy
+  * Analyze the existing content structure for gaps, missing topics, and opportunities
+  * Identify areas where coverage could be improved or expanded
+  * Suggest specific new articles that would enhance the knowledge base
+  * Provide detailed rationale for each recommendation based on content analysis
+  * Focus on practical, valuable additions that fill genuine gaps
+  * Consider topics that would bridge existing categories or provide deeper coverage
+  * Look for popular financial topics not currently covered
+  * Suggest beginner, intermediate, and advanced level content where appropriate
+
+Example: If original request is "use kb 1", call KnowledgeBaseSetContext with knowledge_base_id="1"
 
 Please execute the appropriate knowledge base operations to fulfill this request.
 Use the available tools to complete all necessary steps.
@@ -109,22 +130,66 @@ IMPORTANT:
             """)
         ]
         
+        # Check for loop prevention - track consecutive tool calls
+        consecutive_tool_calls = state.get("consecutive_tool_calls", 0)
+        last_tool_result = state.get("last_tool_result", "")
+        
+        # Add loop prevention warning if too many consecutive tool calls
+        if consecutive_tool_calls >= 3:
+            tool_warning = "\n\nWARNING: You've made several consecutive tool calls. Consider providing a comprehensive final answer instead of calling more tools."
+            messages.append(HumanMessage(content=tool_warning))
+        
         # Invoke LLM with tools to execute the workflow
         response = self.llm_with_tools.invoke(messages)
         
+        # Track if this response has tool calls for loop prevention
+        has_tool_calls = hasattr(response, 'tool_calls') and response.tool_calls
+        new_consecutive_calls = consecutive_tool_calls + 1 if has_tool_calls else 0
+        
+        # Update state with loop prevention tracking
+        state["consecutive_tool_calls"] = new_consecutive_calls
+        
         # Check if the response contains tool calls
-        if hasattr(response, 'tool_calls') and response.tool_calls:
+        if has_tool_calls:
             self.log(f"Executing {len(response.tool_calls)} tool calls")
             
             # Execute tool calls and collect results
             tool_results = []
+            combined_results = []
+            
             for tool_call in response.tool_calls:
                 try:
                     tool_result = self._execute_tool_call(tool_call)
                     tool_results.append(tool_result)
+                    combined_results.append(str(tool_result))
+                    
+                    # Check if this was a KnowledgeBaseSetContext call and update state
+                    if tool_call.get("name") == "KnowledgeBaseSetContext" and tool_result.get("success"):
+                        kb_context = tool_result.get("result", {})
+                        if kb_context.get("success"):
+                            state["knowledge_base_id"] = kb_context.get("knowledge_base_id")
+                            self.log(f"Updated knowledge base context to: {kb_context.get('knowledge_base_id')}")
+                    
+                    # Check if this was a KnowledgeBaseSetArticleContext call and update state
+                    elif tool_call.get("name") == "KnowledgeBaseSetArticleContext" and tool_result.get("success"):
+                        article_context = tool_result.get("result", {})
+                        if article_context.get("success"):
+                            state["knowledge_base_id"] = article_context.get("knowledge_base_id")
+                            state["article_id"] = article_context.get("article_id")
+                            self.log(f"Updated article context to: {article_context.get('article_id')} in KB {article_context.get('knowledge_base_id')}")
+                            
                 except Exception as e:
                     self.log(f"Tool execution error: {str(e)}", "ERROR")
-                    tool_results.append({"error": str(e), "tool": tool_call.get("name", "unknown")})
+                    combined_results.append(f"Error: {str(e)}")
+            
+            # Store last tool result for repetition detection
+            combined_result_str = " | ".join(combined_results)
+            state["last_tool_result"] = combined_result_str[:500]  # Truncate for memory
+            
+            # Check for result repetition (simple detection)
+            if last_tool_result and combined_result_str == last_tool_result:
+                repetition_warning = "\n\nNote: This appears to be a repeated operation. Consider providing a final answer."
+                response.content = response.content + repetition_warning if response.content else repetition_warning
             
             return {
                 "message": response.content,

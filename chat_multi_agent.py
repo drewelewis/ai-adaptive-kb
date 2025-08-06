@@ -29,6 +29,7 @@ def main():
     print("   • ContentMgmt Agent  → Executes knowledge base operations")
     print("=" * 80)
     
+    # Knowledge base selection happens during orchestrator initialization
     # Display agent status
     status = orchestrator.get_agent_status()
     print(f"📊 System Status: {status['total_agents']} agents active")
@@ -56,6 +57,9 @@ def main():
             elif user_input.lower() in ["/reset", "/r"]:
                 print("🔄 Clearing multi-agent conversation state...")
                 clear_conversation_state()
+                print("� Restarting knowledge base selection...")
+                # Re-initialize KB context after reset
+                orchestrator._initialize_knowledge_base_context()
                 print("=" * 80)
                 continue
             

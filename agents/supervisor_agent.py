@@ -95,7 +95,21 @@ Respond with a clear plan for the Content Management Agent.
         """Extract specific workflow steps based on intent"""
         steps = []
         
-        if intent == "create_knowledge_base":
+        if intent == "set_knowledge_base_context":
+            steps = [
+                {"action": "extract_kb_id", "description": "Extract knowledge base ID from user request"},
+                {"action": "validate_kb_exists", "description": "Validate knowledge base exists"},
+                {"action": "set_context", "description": "Set knowledge base context"},
+                {"action": "confirm_context", "description": "Confirm context change to user"}
+            ]
+        elif intent == "set_article_context":
+            steps = [
+                {"action": "extract_article_id", "description": "Extract article ID from user request"},
+                {"action": "validate_article_exists", "description": "Validate article exists in current KB"},
+                {"action": "set_article_context", "description": "Set article working context"},
+                {"action": "confirm_article_context", "description": "Confirm article context to user"}
+            ]
+        elif intent == "create_knowledge_base":
             steps = [
                 {"action": "validate_kb_creation", "description": "Validate knowledge base creation request"},
                 {"action": "create_kb", "description": "Create new knowledge base"},
@@ -122,11 +136,27 @@ Respond with a clear plan for the Content Management Agent.
                 {"action": "retrieve_content", "description": "Retrieve requested content"},
                 {"action": "format_response", "description": "Format response for user"}
             ]
+        elif intent == "retrieve_filtered_content":
+            steps = [
+                {"action": "validate_kb_context", "description": "Ensure knowledge base context is established"},
+                {"action": "identify_section", "description": "Identify the specific section to filter by"},
+                {"action": "retrieve_hierarchy", "description": "Retrieve full article hierarchy"},
+                {"action": "filter_section_content", "description": "Filter to show only the requested section and its children"},
+                {"action": "format_filtered_response", "description": "Format filtered response showing only the requested section"}
+            ]
         elif intent == "search_content":
             steps = [
                 {"action": "validate_kb_context", "description": "Ensure knowledge base context is established"},
                 {"action": "search_content", "description": "Perform search operation"},
                 {"action": "format_results", "description": "Format search results"}
+            ]
+        elif intent == "analyze_content_gaps":
+            steps = [
+                {"action": "validate_kb_context", "description": "Ensure knowledge base context is established"},
+                {"action": "retrieve_full_hierarchy", "description": "Get complete knowledge base structure"},
+                {"action": "analyze_content_coverage", "description": "Analyze existing content for gaps and opportunities"},
+                {"action": "identify_missing_topics", "description": "Identify potential topics that could enhance the knowledge base"},
+                {"action": "generate_content_recommendations", "description": "Generate specific article recommendations with rationale"}
             ]
         else:
             steps = [

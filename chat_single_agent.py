@@ -1,5 +1,4 @@
 import sys
-
 import os
 import json
 import datetime
@@ -12,7 +11,6 @@ from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langchain_core.messages import ToolMessage
-# from langgraph.prebuilt import ToolNode  # Commented out due to import issue
 from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.utils.function_calling import format_tool_to_openai_function
 
@@ -23,6 +21,7 @@ from utils.langgraph_utils import save_graph
 from dotenv import load_dotenv
 from prompts.knowledge_base_prompts import prompts
 from tools.knowledge_base_tools import KnowledgeBaseTools
+from tools.github_tools import GithubTools
  
 load_dotenv(override=True)
 current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -41,17 +40,42 @@ SOFT_RECURSION_LIMIT = 8  # Warning threshold
 
 system_message = f"""Today's date and time: {current_datetime}
 
-{prompts.master_prompt()}"""
+{prompts.master_prompt()}
 
-llm  = AzureChatOpenAI(
+GITHUB INTEGRATION CAPABILITIES:
+You also have access to GitHub tools that allow you to:
+- Get a list of repositories for any GitHub user
+- Browse files and directory structure in any public GitHub repository
+- Read the content of specific files in GitHub repositories
+- Create issues in GitHub repositories (with proper permissions)
+
+When working with GitHub:
+- Always start by getting the user's repositories if they want to work with their own code
+- Use the file listing tool before trying to read specific files
+- Repository names should be in the format 'username/repository-name'
+- Be helpful in exploring codebases and understanding project structures
+- You can help analyze code, documentation, and project organization
+
+INTEGRATED WORKFLOW:
+You can now help users with both knowledge base management AND GitHub repository exploration:
+- Document code from GitHub repositories into knowledge bases
+- Create knowledge base articles about GitHub projects
+- Help organize development documentation
+- Analyze and summarize code from repositories
+- Create issues based on knowledge base content or analysis
+
+Always ask for clarification if you're unsure whether the user wants to work with knowledge bases, GitHub repositories, or both.
+"""
+
+llm = AzureChatOpenAI(
     azure_endpoint=os.getenv('OPENAI_API_ENDPOINT'),
     azure_deployment=os.getenv('OPENAI_API_MODEL_DEPLOYMENT_NAME'),
     api_version=os.getenv('OPENAI_API_VERSION'),
     streaming=True
 )
 
-
 kb_tools = KnowledgeBaseTools()
+github_tools = GithubTools()
 
 # Manual ToolNode implementation (workaround for missing langgraph.prebuilt.ToolNode)
 class ToolNode:
@@ -132,7 +156,8 @@ class ToolNode:
         return {"messages": tool_messages}
 
 
-tools= kb_tools.tools()
+# Combine knowledge base and GitHub tools
+tools = kb_tools.tools() + github_tools.tools()
 llm_with_tools = llm.bind_tools(tools)
 
 def stream_graph_updates(role: str, content: str):
@@ -148,11 +173,9 @@ def stream_graph_updates(role: str, content: str):
     )
     
     for event in events:
-        # print(event)
         if "messages" in event:
             last_message = event["messages"][-1]
             # Only print non-tool messages (hide tool calls and tool responses)
-            # Check for ToolMessage type or messages with tool_calls
             if hasattr(last_message, '__class__'):
                 message_type = last_message.__class__.__name__
                 if message_type in ['ToolMessage']:
@@ -165,13 +188,12 @@ def stream_graph_updates(role: str, content: str):
             # Print all other messages (user messages and AI responses without tool calls)
             last_message.pretty_print()
 
-        last_message=event["messages"][-1]
+        last_message = event["messages"][-1]
     return last_message
 
 
 # Define Nodes
 def chat_node(state: GraphState):
-
     # Extract the current list of messages from the state
     messages = state["messages"]
     recursions = state["recursions"]
@@ -255,7 +277,7 @@ def build_graph():
     graph = graph_builder.compile(checkpointer=memory)
 
     image_path = __file__.replace(".py", ".png")
-    save_graph(image_path,graph)
+    save_graph(image_path, graph)
     
     return graph
 
@@ -275,20 +297,35 @@ def clear_conversation_state():
         print(f"⚠ Error clearing state: {e}")
         print("You may need to restart the application for a complete reset.")
 
-graph=build_graph()
-
+graph = build_graph()
 
 
 def main():
-    print("=" * 60)
-    print("=" * 60)
-    print("=" * 60)
-    print("🤖 AI Knowledge Base Chat started!")
-    print("Commands:")
-    print("  • Type '/q' or '/quit' to exit")
-    print("  • Type '/reset' or '/r' to clear conversation state and start fresh")
-    print("  • Type your question or command to interact with the AI")
-    print("=" * 60)
+    print("=" * 70)
+    print("🤖 AI KNOWLEDGE BASE & GITHUB INTEGRATION CHAT")
+    print("=" * 70)
+    print("🎯 Capabilities:")
+    print("   📚 Knowledge Base Management - Create, update, and organize knowledge bases")
+    print("   🐙 GitHub Integration - Explore repositories, read files, and create issues")
+    print("   🔄 Integrated Workflows - Document code, analyze projects, and more!")
+    print("=" * 70)
+    
+    # Count available tools
+    kb_tool_count = len(kb_tools.tools())
+    github_tool_count = len(github_tools.tools())
+    total_tools = kb_tool_count + github_tool_count
+    
+    print(f"🛠️  Available Tools: {total_tools} total")
+    print(f"   • Knowledge Base Tools: {kb_tool_count}")
+    print(f"   • GitHub Tools: {github_tool_count}")
+    print("=" * 70)
+    print("💬 Commands:")
+    print("   • Type '/q' or '/quit' to exit")
+    print("   • Type '/reset' or '/r' to clear conversation state and start fresh")
+    print("   • Type '/tools' to show tool status")
+    print("   • Type your question or command to interact with the AI")
+    print("   • Ask about knowledge bases, GitHub repositories, or both!")
+    print("=" * 70)
     
     while True:
         try:
@@ -302,7 +339,16 @@ def main():
             elif user_input.lower() in ["/reset", "/r"]:
                 print("🔄 Clearing conversation state and starting new conversation...")
                 clear_conversation_state()
-                print("=" * 60)
+                print("=" * 70)
+                continue
+            
+            elif user_input.lower() in ["/tools"]:
+                print("🛠️  Tool Status:")
+                print(f"   • Knowledge Base Tools: {len(kb_tools.tools())} available")
+                print(f"   • GitHub Tools: {len(github_tools.tools())} available")
+                print(f"   • Total Tools: {len(tools)} available")
+                print(f"   • Max Recursions: {MAX_RECURSIONS}")
+                print(f"   • Soft Limit Warning: {SOFT_RECURSION_LIMIT}")
                 continue
             
             # Process normal user input
@@ -311,8 +357,6 @@ def main():
             # Check if we need to suggest a reset due to recursion limit
             if hasattr(ai_message, 'content') and "recursion limit" in str(ai_message.content).lower():
                 print("\n💡 Tip: Type '/reset' to start a new conversation with a fresh context.")
-            
-            # print(ai_message.content)
 
         except KeyboardInterrupt:
             print("\n\n⚠ Interrupted by user. Type '/q' to quit properly.")
