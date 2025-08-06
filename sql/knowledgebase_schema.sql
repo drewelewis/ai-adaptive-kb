@@ -23,6 +23,10 @@ CREATE TABLE knowledge_base (
     version INTEGER DEFAULT 1,
     is_active BOOLEAN DEFAULT TRUE
 );
+-- Insert sample knowledge base entries
+INSERT INTO knowledge_base (name, description, author_id) VALUES
+('Complete Guide to Retiring Before 60', 'A comprehensive guide on how to retire early and enjoy life.', 1),
+('Comprehensive Guide to Building AI Solutions', 'A collection of tips and tricks for using AI in software development.', 2);
 
 CREATE TABLE knowledge_base_versions (
     id SERIAL PRIMARY KEY,
@@ -119,4 +123,57 @@ $$ LANGUAGE sql STABLE;
 
 -- Usage:
 -- SELECT * FROM get_article_hierarchy(1);
+
+-- =============================================
+-- INDEXES FOR PERFORMANCE OPTIMIZATION
+-- =============================================
+
+-- Users table indexes
+-- Note: users.id already has a PRIMARY KEY index (automatic with SERIAL PRIMARY KEY)
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_name ON users(name); -- For searching users by name
+
+-- Knowledge base table indexes
+CREATE INDEX idx_knowledge_base_author_id ON knowledge_base(author_id);
+CREATE INDEX idx_knowledge_base_is_active ON knowledge_base(is_active);
+CREATE INDEX idx_knowledge_base_created_at ON knowledge_base(created_at);
+CREATE INDEX idx_knowledge_base_updated_at ON knowledge_base(updated_at);
+CREATE INDEX idx_knowledge_base_active_author ON knowledge_base(is_active, author_id);
+
+-- Knowledge base versions table indexes
+CREATE INDEX idx_kb_versions_kb_id ON knowledge_base_versions(knowledge_base_id);
+CREATE INDEX idx_kb_versions_version ON knowledge_base_versions(knowledge_base_id, version);
+CREATE INDEX idx_kb_versions_updated_at ON knowledge_base_versions(updated_at);
+
+-- Articles table indexes
+CREATE INDEX idx_articles_knowledge_base_id ON articles(knowledge_base_id);
+CREATE INDEX idx_articles_author_id ON articles(author_id);
+CREATE INDEX idx_articles_parent_id ON articles(parent_id);
+CREATE INDEX idx_articles_is_active ON articles(is_active);
+CREATE INDEX idx_articles_created_at ON articles(created_at);
+CREATE INDEX idx_articles_updated_at ON articles(updated_at);
+
+-- Composite indexes for common query patterns
+CREATE INDEX idx_articles_kb_active ON articles(knowledge_base_id, is_active);
+CREATE INDEX idx_articles_parent_active ON articles(parent_id, is_active);
+CREATE INDEX idx_articles_kb_parent_active ON articles(knowledge_base_id, parent_id, is_active);
+CREATE INDEX idx_articles_active_created ON articles(is_active, created_at);
+
+-- Text search indexes for LIKE queries
+CREATE INDEX idx_articles_title_lower ON articles(lower(title));
+
+-- Tags table indexes
+CREATE INDEX idx_tags_knowledge_base_id ON tags(knowledge_base_id);
+CREATE INDEX idx_tags_name ON tags(name);
+CREATE INDEX idx_tags_kb_name ON tags(knowledge_base_id, name);
+
+-- Article tags table indexes (already has composite PK, but adding for reverse lookups)
+CREATE INDEX idx_article_tags_tag_id ON article_tags(tag_id);
+CREATE INDEX idx_article_tags_article_id ON article_tags(article_id);
+
+-- Article versions table indexes
+CREATE INDEX idx_article_versions_article_id ON article_versions(article_id);
+CREATE INDEX idx_article_versions_version ON article_versions(article_id, version);
+CREATE INDEX idx_article_versions_updated_at ON article_versions(updated_at);
+CREATE INDEX idx_article_versions_article_updated ON article_versions(article_id, updated_at);
 

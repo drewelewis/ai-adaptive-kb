@@ -26,3 +26,4 @@ psycopg2
 mkdocs
 python-slugify
 
+
