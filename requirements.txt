@@ -25,5 +25,6 @@ asyncio
 psycopg2
 mkdocs
 python-slugify
+PyGithub
 
 

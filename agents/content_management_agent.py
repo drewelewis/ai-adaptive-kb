@@ -1,0 +1,217 @@
+from typing import List, Dict, Any, Optional
+from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
+from langchain_openai import AzureChatOpenAI
+from agents.base_agent import BaseAgent
+from agents.agent_types import AgentState, AgentMessage
+from tools.knowledge_base_tools import KnowledgeBaseTools
+from prompts.knowledge_base_prompts import prompts as kb_prompts
+from prompts.multi_agent_prompts import prompts as ma_prompts
+
+
+class ContentManagementAgent(BaseAgent):
+    """
+    Content Management Agent - Specialized agent for knowledge base operations.
+    Implements robust content management strategies and executes all KB tools.
+    """
+    
+    def __init__(self, llm: AzureChatOpenAI):
+        # Combine base KB prompts with specialized multi-agent prompts
+        base_prompt = kb_prompts.master_prompt()
+        specialized_prompt = ma_prompts.content_management_prompt()
+        system_prompt = f"{base_prompt}\n\n{specialized_prompt}"
+        
+        super().__init__("ContentManagement", llm, system_prompt)
+        
+        # Initialize knowledge base tools
+        self.kb_tools = KnowledgeBaseTools()
+        self.tools = self.kb_tools.tools()
+        
+        # Bind tools to LLM
+        self.llm_with_tools = llm.bind_tools(self.tools)
+    
+    def process(self, state: AgentState) -> AgentState:
+        """Process content management requests and execute operations"""
+        self.log("Processing content management request")
+        
+        # Check for messages from Supervisor
+        agent_messages = state.get("agent_messages", [])
+        my_messages = [msg for msg in agent_messages if msg.recipient == self.name]
+        
+        if not my_messages:
+            self.log("No workflow requests found")
+            return state
+        
+        # Get the latest workflow request
+        latest_request = my_messages[-1]
+        workflow_plan = latest_request.metadata.get("workflow_plan", {})
+        
+        self.log(f"Executing workflow: {workflow_plan.get('intent', 'unknown')}")
+        
+        # Execute the content management workflow
+        try:
+            result = self._execute_content_workflow(workflow_plan, state)
+            
+            # Create success response for Supervisor
+            response = self.create_message(
+                recipient="Supervisor",
+                message_type="workflow_response",
+                content=result["message"],
+                metadata={"success": True, "results": result["data"]}
+            )
+            
+        except Exception as e:
+            self.log(f"Error executing workflow: {str(e)}", "ERROR")
+            
+            # Create error response for Supervisor
+            response = self.create_message(
+                recipient="Supervisor", 
+                message_type="workflow_response",
+                content=f"Content management operation failed: {str(e)}",
+                metadata={"success": False, "error": str(e)}
+            )
+        
+        # Add response to agent messages
+        state["agent_messages"].append(response)
+        
+        # Return control to Supervisor
+        state["current_agent"] = "Supervisor"
+        
+        return state
+    
+    def _execute_content_workflow(self, workflow_plan: Dict[str, Any], state: AgentState) -> Dict[str, Any]:
+        """Execute the content management workflow using available tools"""
+        intent = workflow_plan.get("intent", "")
+        steps = workflow_plan.get("steps", [])
+        
+        self.log(f"Executing {len(steps)} workflow steps for intent: {intent}")
+        
+        # Create messages for LLM with tools
+        messages = [
+            self.get_system_message(),
+            HumanMessage(content=f"""
+Execute the following content management workflow:
+
+Intent: {intent}
+Workflow Plan: {workflow_plan.get('description', '')}
+Steps: {[step['description'] for step in steps]}
+
+Current Knowledge Base ID: {state.get('knowledge_base_id', 'Not specified')}
+Original Request: {workflow_plan.get('original_request', 'Not provided')}
+
+Please execute the appropriate knowledge base operations to fulfill this request.
+Use the available tools to complete all necessary steps.
+
+IMPORTANT: 
+- Always validate knowledge base context first
+- Use proper error handling for all operations
+- Provide comprehensive feedback on results
+- Maintain content organization best practices
+            """)
+        ]
+        
+        # Invoke LLM with tools to execute the workflow
+        response = self.llm_with_tools.invoke(messages)
+        
+        # Check if the response contains tool calls
+        if hasattr(response, 'tool_calls') and response.tool_calls:
+            self.log(f"Executing {len(response.tool_calls)} tool calls")
+            
+            # Execute tool calls and collect results
+            tool_results = []
+            for tool_call in response.tool_calls:
+                try:
+                    tool_result = self._execute_tool_call(tool_call)
+                    tool_results.append(tool_result)
+                except Exception as e:
+                    self.log(f"Tool execution error: {str(e)}", "ERROR")
+                    tool_results.append({"error": str(e), "tool": tool_call.get("name", "unknown")})
+            
+            return {
+                "message": response.content,
+                "data": {
+                    "tool_results": tool_results,
+                    "workflow_completed": True,
+                    "intent": intent
+                }
+            }
+        else:
+            # No tool calls, return the response content
+            return {
+                "message": response.content,
+                "data": {
+                    "workflow_completed": True,
+                    "intent": intent,
+                    "note": "No tool operations required"
+                }
+            }
+    
+    def _execute_tool_call(self, tool_call: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a specific tool call"""
+        tool_name = tool_call.get("name", "")
+        tool_args = tool_call.get("args", {})
+        
+        self.log(f"Executing tool: {tool_name}")
+        
+        # Find the tool by name
+        tool = None
+        for available_tool in self.tools:
+            if available_tool.name == tool_name:
+                tool = available_tool
+                break
+        
+        if not tool:
+            raise Exception(f"Tool not found: {tool_name}")
+        
+        # Execute the tool
+        try:
+            result = tool._run(**tool_args)
+            return {
+                "tool": tool_name,
+                "success": True,
+                "result": result
+            }
+        except Exception as e:
+            raise Exception(f"Tool execution failed for {tool_name}: {str(e)}")
+    
+    def validate_knowledge_base_context(self, state: AgentState) -> bool:
+        """Validate that knowledge base context is properly established"""
+        kb_id = state.get("knowledge_base_id")
+        
+        if not kb_id:
+            self.log("No knowledge base context established", "WARNING")
+            return False
+        
+        # Validate KB exists using tools
+        try:
+            # Use get knowledge base tool to validate
+            kb_tool = None
+            for tool in self.tools:
+                if tool.name == "KnowledgeBaseGetKnowledgeBases":
+                    kb_tool = tool
+                    break
+            
+            if kb_tool:
+                kb_list = kb_tool._run()
+                valid_ids = [str(kb.id) for kb in kb_list] if kb_list else []
+                
+                if kb_id not in valid_ids:
+                    self.log(f"Invalid knowledge base ID: {kb_id}", "ERROR")
+                    return False
+                
+            return True
+            
+        except Exception as e:
+            self.log(f"Error validating KB context: {str(e)}", "ERROR")
+            return False
+    
+    def get_content_management_strategies(self) -> Dict[str, str]:
+        """Return available content management strategies"""
+        return {
+            "hierarchical_organization": "Organize content in logical hierarchical structures",
+            "strategic_tagging": "Implement comprehensive tagging for discoverability",
+            "content_lifecycle": "Manage content from creation to archival",
+            "quality_assurance": "Ensure content meets quality and consistency standards",
+            "relationship_mapping": "Map and maintain content relationships",
+            "search_optimization": "Optimize content for search and discovery",
+            "structure_validation": "Validate and maintain knowledge base structure"
+        }

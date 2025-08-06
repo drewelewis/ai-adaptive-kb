@@ -39,10 +39,9 @@ class GraphState(TypedDict):
 MAX_RECURSIONS = 15  # Reduced from 25 to catch issues earlier
 SOFT_RECURSION_LIMIT = 8  # Warning threshold
 
-system_message="Today's date and time: " + current_datetime + "\n\n"
-system_message= system_message + prompts.master_prompt()
-system_message= system_message + "\n\nIMPORTANT: When inserting articles, never include an 'id' field in the article object. The database automatically generates unique IDs."
-system_message= system_message + "\n\nEFFICIENCY GUIDELINES:\n- Minimize tool usage - only call tools when absolutely necessary\n- After calling tools, provide a complete response rather than additional tool calls\n- If you need multiple operations, try to accomplish them in fewer tool calls\n- Always aim to give a final answer after using tools"
+system_message = f"""Today's date and time: {current_datetime}
+
+{prompts.master_prompt()}"""
 
 llm  = AzureChatOpenAI(
     azure_endpoint=os.getenv('OPENAI_API_ENDPOINT'),
