@@ -189,6 +189,8 @@ class KnowledgeBaseTools():
         name: str = "KnowledgeBaseInsertArticle"
         description: str = """
             useful for when you need to add an article to a Knowledge Base.
+            IMPORTANT: Do NOT include an 'id' field in the article object - IDs are auto-generated.
+            Article must contain: title, content, author_id, parent_id, knowledge_base_id.
         """.strip()
         return_direct: bool = False
 

@@ -34,6 +34,8 @@ class KnowledgeBasePrompts:
                 - You will help the user update existing articles in the knowledge base.
                 - You will insert new articles into the knowledge base when asked by the user.
                 - When inserting new articles, you will use the user id of 1.
+                - IMPORTANT: When creating articles, do NOT include an 'id' field in the article object. The database automatically generates unique IDs for new articles.
+                - The article object should only contain: title, content, author_id, parent_id, and knowledge_base_id.
                 - Before inserting new articles, you will suggest title and content of the article.
                 - Articles will be formatted in markdown.
                 - Before inserting new articles, you will need to know the exisiting articles in the knowledge base in order to avoid duplicates and to preserve the structure of the knowledge base.
