@@ -15,6 +15,10 @@ from operations.knowledge_base_operations import KnowledgeBaseOperations
 
 kb_Operations=KnowledgeBaseOperations()
 
+# Input schemas for tools
+class KnowledgeBaseAnalyzeContentGapsInput(BaseModel):
+    knowledge_base_id: str = Field(description="The knowledge base ID to analyze for content gaps")
+
 class KnowledgeBaseTools():
     
     class KnowledgeBaseGetKnowledgeBases(BaseTool):
@@ -26,43 +30,21 @@ class KnowledgeBaseTools():
 
         def _run(self) -> str:
             try:
-                # Get raw knowledge bases data
-                raw_kb_data = kb_Operations.get_knowledge_bases()
+                # Get knowledge bases with IDs and names
+                knowledge_bases = kb_Operations.get_knowledge_bases_with_ids()
                 
-                # Parse and format the knowledge bases nicely
-                if isinstance(raw_kb_data, str) and raw_kb_data.startswith('['):
-                    # Handle string representation of list
-                    import ast
-                    try:
-                        # Convert string back to list (this is a workaround for the current implementation)
-                        kb_list_str = raw_kb_data
-                        # Extract meaningful data using string parsing since we get string representation
-                        lines = []
-                        lines.append("Available Knowledge Bases:")
-                        lines.append("")
-                        
-                        # Simple parsing to extract ID and name from the string
-                        import re
-                        id_matches = re.findall(r"'id': (\d+)", kb_list_str)
-                        name_matches = re.findall(r"'name': '([^']+)'", kb_list_str)
-                        desc_matches = re.findall(r"'description': '([^']+)'", kb_list_str)
-                        
-                        for i, (kb_id, name, desc) in enumerate(zip(id_matches, name_matches, desc_matches)):
-                            lines.append(f"  📚 ID: {kb_id}")
-                            lines.append(f"     Name: {name}")
-                            lines.append(f"     Description: {desc}")
-                            lines.append("")
-                        
-                        return "\n".join(lines)
-                        
-                    except Exception as parse_error:
-                        return f"Error parsing knowledge bases: {parse_error}\nRaw data: {raw_kb_data}"
+                if not knowledge_bases:
+                    return "No knowledge bases found."
                 
-                elif isinstance(raw_kb_data, list) and len(raw_kb_data) == 0:
-                    return "No knowledge bases found. You may want to create a new one."
+                # Format the knowledge bases nicely
+                lines = ["Available Knowledge Bases:", ""]
+                for kb in knowledge_bases:
+                    lines.append(f"• {kb['name']} (ID: {kb['id']})")
+                    if kb['description']:
+                        lines.append(f"  Description: {kb['description']}")
+                    lines.append("")
                 
-                else:
-                    return f"Available Knowledge Bases:\n{raw_kb_data}"
+                return "\n".join(lines).strip()
                     
             except Exception as e:
                 return f"Error retrieving knowledge bases: {e}"
@@ -307,9 +289,25 @@ class KnowledgeBaseTools():
     class KnowledgeBaseInsertArticle(BaseTool):
         name: str = "KnowledgeBaseInsertArticle"
         description: str = """
-            useful for when you need to add an article to a Knowledge Base.
-            IMPORTANT: Do NOT include an 'id' field in the article object - IDs are auto-generated.
-            Article must contain: title, content, author_id, parent_id, knowledge_base_id.
+            Use this tool to CREATE NEW ARTICLES AND CATEGORIES in a Knowledge Base.
+            CRITICAL: This is the primary tool for content creation - use this when user asks to create, add, or insert content.
+            
+            Required Parameters:
+            - article: Article object with fields {title, content, author_id, parent_id, knowledge_base_id}
+            - knowledge_base_id: The knowledge base ID (as string)
+            
+            Article Object Fields:
+            - title: Clear title for the article/category
+            - content: Detailed content (minimum 200 characters recommended)
+            - author_id: Use 1 for AI-generated content
+            - parent_id: Use null for main categories, or parent article ID for sub-articles
+            - knowledge_base_id: Same as the knowledge_base_id parameter (as integer)
+            
+            Example Usage:
+            article={"title": "Family Finance", "content": "Comprehensive guide...", "author_id": 1, "parent_id": null, "knowledge_base_id": 1}
+            knowledge_base_id="1"
+            
+            DO NOT include 'id' field - IDs are auto-generated.
         """.strip()
         return_direct: bool = False
 
@@ -711,8 +709,263 @@ class KnowledgeBaseTools():
             self.KnowledgeBaseSetArticleTags(),
             # Advanced tag tools
             self.KnowledgeBaseGetTagsWithUsageCount(),
-            self.KnowledgeBaseSearchArticlesByTags()
+            self.KnowledgeBaseSearchArticlesByTags(),
+            # Content analysis tools
+            self.KnowledgeBaseAnalyzeContentGaps()
         ]
+
+    class KnowledgeBaseAnalyzeContentGaps(BaseTool):
+        name: str = "KnowledgeBaseAnalyzeContentGaps"
+        description: str = """
+            Analyze content gaps in a knowledge base and suggest new content ideas.
+            Use this tool when the user wants to find gaps in content, analyze content coverage,
+            or get suggestions for new articles to add to the knowledge base.
+        """.strip()
+        args_schema: Type[BaseModel] = KnowledgeBaseAnalyzeContentGapsInput
+        return_direct: bool = False
+
+        def _run(self, knowledge_base_id: str, run_manager: Optional[CallbackManagerForToolRun] = None) -> str:
+            try:
+                print(f"Executing SQL: SELECT * FROM get_article_hierarchy(%s); with knowledge_base_id: {knowledge_base_id}")
+                
+                # Get the article hierarchy for analysis
+                articles = kb_Operations.get_article_hierarchy(knowledge_base_id)
+                
+                if not articles:
+                    return f"❌ Error retrieving content for analysis: No articles found"
+                
+                # Perform comprehensive gap analysis
+                gap_analysis = self._analyze_content_structure(articles)
+                
+                return f"""🔍 **CONTENT GAP ANALYSIS RESULTS**
+
+📊 **Current Content Overview:**
+{gap_analysis['overview']}
+
+🎯 **Identified Content Gaps:**
+{gap_analysis['gaps']}
+
+💡 **Recommended New Articles:**
+{gap_analysis['recommendations']}
+
+📈 **Content Enhancement Opportunities:**
+{gap_analysis['enhancements']}
+
+⭐ **Priority Recommendations:**
+{gap_analysis['priorities']}
+
+🎯 **Analysis Summary:**
+Based on your current knowledge base content, I've identified specific areas where you could enhance coverage. The recommendations above are prioritized based on common financial planning needs and trending topics in personal finance.
+"""
+            
+            except Exception as e:
+                return f"❌ Error during gap analysis: {str(e)}"
+        
+        def _analyze_content_structure(self, articles: list) -> dict:
+            """Analyze article structure and identify gaps"""
+            
+            # Define comprehensive financial topic categories and expected subtopics
+            expected_categories = {
+                "Budgeting": [
+                    "Zero-based budgeting", "Envelope budgeting", "Digital budgeting tools", 
+                    "Budgeting for couples", "Budgeting for students", "Vacation budgeting",
+                    "Holiday budgeting", "Budgeting with irregular income"
+                ],
+                "Investment": [
+                    "Index fund investing", "Dollar-cost averaging", "Value investing",
+                    "Growth investing", "Dividend growth investing", "ESG investing",
+                    "Target-date funds", "Robo-advisors", "Investment psychology"
+                ],
+                "Retirement Planning": [
+                    "FIRE movement strategies", "401k rollover strategies", "Roth conversion ladder",
+                    "Social Security optimization", "Medicare planning", "Retirement location planning",
+                    "Part-time work in retirement", "Retirement tax planning"
+                ],
+                "Debt Management": [
+                    "Student loan forgiveness programs", "Medical debt management", 
+                    "Credit card churning", "Debt negotiation strategies",
+                    "Business debt management", "Mortgage refinancing strategies"
+                ],
+                "Insurance": [
+                    "Term vs whole life insurance", "Disability insurance for self-employed",
+                    "Umbrella insurance", "Pet insurance", "Travel insurance",
+                    "Professional liability insurance", "Insurance for gig workers"
+                ],
+                "Tax Planning": [
+                    "HSA strategies", "529 plan optimization", "Tax-loss harvesting",
+                    "Charitable tax strategies", "State tax planning", "International tax issues",
+                    "Self-employment tax strategies", "Tax planning for investors"
+                ],
+                "Emergency Planning": [
+                    "Emergency fund alternatives", "Financial crisis preparation",
+                    "Job loss preparation", "Medical emergency planning",
+                    "Natural disaster financial planning", "Identity theft recovery"
+                ],
+                "Career & Income": [
+                    "Salary negotiation", "Career change financial planning", 
+                    "Freelance financial management", "Side hustle tax implications",
+                    "Professional development ROI", "Geographic arbitrage"
+                ],
+                "Family Finance": [
+                    "Teaching kids about money", "College savings strategies",
+                    "Childcare cost optimization", "Elder care financial planning",
+                    "Special needs financial planning", "Divorce financial planning"
+                ],
+                "Technology & Finance": [
+                    "Fintech apps review", "Cryptocurrency basics", "Digital payment security",
+                    "Online banking optimization", "Financial app privacy", "Digital estate planning"
+                ]
+            }
+            
+            # Extract existing topics from articles
+            existing_topics = {}
+            total_articles = len(articles)
+            
+            for article in articles:
+                # Database returns tuples: (id, title, author, parent_id)
+                article_id, title, author, parent_id = article
+                
+                # Determine main category from title or use a default approach
+                # For now, let's extract category from common patterns
+                main_category = "General"  # Default category
+                
+                # Simple category extraction based on common financial terms
+                title_lower = title.lower() if title else ""
+                if any(word in title_lower for word in ["budget", "budgeting"]):
+                    main_category = "Budgeting"
+                elif any(word in title_lower for word in ["invest", "investment", "stock", "bond"]):
+                    main_category = "Investment Strategies"
+                elif any(word in title_lower for word in ["tax", "taxation"]):
+                    main_category = "Tax Planning"
+                elif any(word in title_lower for word in ["retire", "retirement"]):
+                    main_category = "Retirement Planning"
+                elif any(word in title_lower for word in ["debt", "credit"]):
+                    main_category = "Debt Management"
+                elif any(word in title_lower for word in ["insurance", "health"]):
+                    main_category = "Insurance"
+                elif any(word in title_lower for word in ["real estate", "property", "rental"]):
+                    main_category = "Real Estate"
+                elif any(word in title_lower for word in ["side hustle", "entrepreneurship", "business"]):
+                    main_category = "Side Hustles & Entrepreneurship"
+                
+                if main_category not in existing_topics:
+                    existing_topics[main_category] = []
+                existing_topics[main_category].append({
+                    'title': title or '',
+                    'id': article_id or '',
+                    'author': author or ''
+                })
+            
+            # Identify gaps and recommendations
+            gaps = []
+            recommendations = []
+            priorities = []
+            missing_categories = []
+            
+            for expected_cat, expected_topics in expected_categories.items():
+                # Find matching existing category (fuzzy match)
+                existing_cat = None
+                for existing in existing_topics.keys():
+                    if (expected_cat.lower() in existing.lower() or 
+                        existing.lower() in expected_cat.lower() or
+                        any(word in existing.lower() for word in expected_cat.lower().split())):
+                        existing_cat = existing
+                        break
+                
+                if not existing_cat:
+                    # Entire category is missing
+                    missing_categories.append(expected_cat)
+                    gaps.append(f"❌ **Missing Category: {expected_cat}**")
+                    recommendations.extend([
+                        f"• Create '{expected_cat}' section starting with: {expected_topics[0] if expected_topics else 'Basic concepts'}",
+                        f"• Add foundational article: {expected_topics[1] if len(expected_topics) > 1 else 'Basic concepts'}"
+                    ])
+                    priorities.append(f"🔥 HIGH PRIORITY: Create {expected_cat} category")
+                else:
+                    # Check for missing subtopics within existing category
+                    existing_titles = [article['title'] for article in existing_topics[existing_cat]]
+                    missing_subtopics = []
+                    
+                    for expected_topic in expected_topics:
+                        # Enhanced keyword matching
+                        topic_keywords = expected_topic.lower().split()
+                        topic_covered = any(
+                            len([word for word in topic_keywords if word in title.lower()]) >= len(topic_keywords) // 2
+                            for title in existing_titles
+                        )
+                        if not topic_covered:
+                            missing_subtopics.append(expected_topic)
+                    
+                    if missing_subtopics:
+                        gaps.append(f"⚠️ **{existing_cat}** - Missing: {', '.join(missing_subtopics[:3]) if missing_subtopics else 'No gaps identified'}")
+                        recommendations.extend([
+                            f"• Add to {existing_cat}: '{topic}'" 
+                            for topic in missing_subtopics[:2]
+                        ])
+            
+            # Identify trending financial topics not covered
+            trending_topics = [
+                "Cryptocurrency tax implications", "Remote work financial planning", 
+                "Gig economy tax strategies", "ESG/Sustainable investing",
+                "Financial planning for digital nomads", "NFT investment considerations",
+                "Inflation protection strategies", "Supply chain impact on investments",
+                "Work-from-home tax deductions", "Financial wellness programs",
+                "Robo-advisor comparison", "Buy now, pay later (BNPL) impact"
+            ]
+            
+            uncovered_trending = []
+            for topic in trending_topics:
+                try:
+                    topic_keywords = topic.lower().split()[:2] if topic else []  # Use first 2 keywords for matching
+                    topic_covered = any(
+                        any(keyword in (article[1] or '').lower() for keyword in topic_keywords)  # article[1] is title
+                        for article in articles
+                    )
+                    if not topic_covered:
+                        uncovered_trending.append(topic)
+                        if len(recommendations) < 15:  # Limit recommendations
+                            recommendations.append(f"• Trending topic: '{topic}'")
+                        if "cryptocurrency" in topic.lower() or "remote work" in topic.lower() or "gig economy" in topic.lower():
+                            priorities.append(f"⭐ TRENDING: {topic}")
+                except (AttributeError, IndexError) as e:
+                    continue  # Skip problematic topics
+            
+            # Generate content coverage analysis
+            coverage_score = max(0, 100 - (len(missing_categories) * 15) - (len(gaps) * 5))
+            
+            # Generate overview
+            overview = f"""
+📋 Total Articles: {total_articles}
+📁 Total Categories: {len(existing_topics)}
+📊 Content Coverage Score: {coverage_score}% {"🟢" if coverage_score >= 80 else "🟡" if coverage_score >= 60 else "🔴"}
+🎯 Categories Well-Covered: {len(existing_topics) - len(missing_categories)}
+⚠️ Categories Missing: {len(missing_categories)}
+📈 Trending Topics Covered: {len(trending_topics) - len(uncovered_trending)}/{len(trending_topics)}
+"""
+            
+            # Enhanced recommendations with beginner/intermediate/advanced levels
+            enhanced_recommendations = recommendations[:10]  # Limit to top 10
+            if len(enhanced_recommendations) < 5:
+                enhanced_recommendations.extend([
+                    "• Add beginner guides to existing complex topics",
+                    "• Create case studies for real-world application",
+                    "• Develop interactive calculators and tools"
+                ])
+            
+            return {
+                'overview': overview,
+                'gaps': '\n'.join(gaps) if gaps else "✅ No major content gaps identified - your knowledge base has good coverage!",
+                'recommendations': '\n'.join(enhanced_recommendations) if enhanced_recommendations else "✅ Content appears comprehensive for current scope",
+                'enhancements': '\n'.join([
+                    "• Add beginner-friendly introductions to complex topics",
+                    "• Create case studies and real-world examples", 
+                    "• Add interactive calculators and worksheets",
+                    "• Develop step-by-step guides for complex processes",
+                    "• Include common mistakes and how to avoid them",
+                    "• Add seasonal/timely content (tax season, year-end planning)"
+                ]),
+                'priorities': '\n'.join(priorities[:5]) if priorities else "✅ No urgent content gaps identified - focus on enhancing existing content quality"
+            }
 
     # Method to get tools (for ease of use, made so class works similarly to LangChain toolkits)
     def tools(self) -> List[BaseTool]:

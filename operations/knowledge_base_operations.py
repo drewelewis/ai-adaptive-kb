@@ -1,5 +1,5 @@
 import os
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
@@ -33,9 +33,25 @@ class KnowledgeBaseOperations:
                     sql = """SELECT * FROM knowledge_base WHERE is_active = TRUE;"""
                     cur.execute(sql)
                     knowledge_bases = cur.fetchall()
-                    return str(knowledge_bases)
+                    # Return list of knowledge base names
+                    return [kb['name'] for kb in knowledge_bases]
         except Exception as e:
             print(f"An error occurred with KnowledgeBaseOperations.get_knowledge_bases: {e}")
+            return []
+    
+    def get_knowledge_bases_with_ids(self) -> List[Dict[str, Any]]:
+        """Get knowledge bases with their IDs and names"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    # get all active knowledge bases
+                    sql = """SELECT id, name, description FROM knowledge_base WHERE is_active = TRUE;"""
+                    cur.execute(sql)
+                    knowledge_bases = cur.fetchall()
+                    # Return list of dicts with id and name
+                    return [{"id": str(kb['id']), "name": kb['name'], "description": kb['description']} for kb in knowledge_bases]
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.get_knowledge_bases_with_ids: {e}")
             return []
     # update knowledge base by id
     def update_knowledge_base(self, knowledge_base: KnowledgeBase.UpdateModel) -> Optional[KnowledgeBase.BaseModel]:
@@ -126,14 +142,15 @@ class KnowledgeBaseOperations:
 
         # get article_hierarchy function is a recursive function that returns the hierarchy of articles in a knowledge base
     def get_article_hierarchy(self, knowledge_base_id: str) -> List[Article.HierarchyModel]:
+        conn = None
         try:
-            with self._get_connection() as conn:
-                with conn.cursor() as cur:
-                    sql = "SELECT * FROM get_article_hierarchy(%s);"
-                    print(f"Executing SQL: {sql} with knowledge_base_id: {knowledge_base_id}")
-                    cur.execute(sql, (knowledge_base_id,))
-                    articles = cur.fetchall()
-                    return articles
+            conn = self._get_connection()
+            with conn.cursor() as cur:
+                sql = "SELECT * FROM get_article_hierarchy(%s);"
+                print(f"Executing SQL: {sql} with knowledge_base_id: {knowledge_base_id}")
+                cur.execute(sql, (knowledge_base_id,))
+                articles = cur.fetchall()
+                return articles
         except Exception as e:
             print(f"An error occurred with KnowledgeBaseOperations.get_article_hierarchy: {e}")
             return []

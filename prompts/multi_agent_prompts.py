@@ -158,6 +158,14 @@ WORKFLOW HANDLING BY INTENT:
   * Step 2: Use KnowledgeBaseGetArticleHierarchy to get all articles
   * Step 3: Find the main section article matching the requested section name
   * Step 4: Filter results to include ONLY that section and its direct/indirect children
+- "create_content" intent: Create new categories (articles) and sub-articles as requested
+  * When workflow intent is "create_content":
+  * Step 1: Use KnowledgeBaseGetArticleHierarchy to understand current structure
+  * Step 2: Analyze the request to identify what needs to be created (categories vs articles)
+  * Step 3: Create parent categories FIRST using KnowledgeBaseInsertArticle (with parent_id=null)
+  * Step 4: Create child articles SECOND using KnowledgeBaseInsertArticle (with parent_id set to parent)
+  * Step 5: Add relevant tags using KnowledgeBaseInsertTag for discoverability
+  * Step 6: Provide comprehensive summary of all created content
   * Step 5: Format output to show just the filtered section with proper hierarchy
   * CRITICAL: Do NOT include other unrelated sections in filtered results
 
@@ -167,6 +175,26 @@ TOOL EXECUTION PROTOCOLS:
   * Extract the KB ID from the original request (e.g., "1" from "use kb 1")
   * Use KnowledgeBaseSetContext tool with the extracted KB ID
   * Do NOT use KnowledgeBaseGetKnowledgeBases for setting context
+- For "create_content" workflows with content creation requests:
+  * CRITICAL: Use KnowledgeBaseInsertArticle tool to create new categories and articles
+  * Step 1: Parse the request to identify what content needs to be created
+  * Step 2: Create parent categories FIRST (set parent_id=null for main categories)
+  * Step 3: Create child articles SECOND (set parent_id to the parent's ID)
+  * Step 4: Use proper titles, summaries, and content for each article
+  * Step 5: Add tags using KnowledgeBaseInsertTag for better organization
+  * Example: "Create Family Finance category" should use KnowledgeBaseInsertArticle with:
+    - title="Family Finance" 
+    - summary="Comprehensive guide to family financial planning and management"
+    - content="This category covers all aspects of family finance..."
+    - parent_id=null (for main category)
+    - knowledge_base_id=[current KB ID]
+  * Example: "Create article about family budgeting" should use KnowledgeBaseInsertArticle with:
+    - title="Family Budgeting Strategies"
+    - summary="Effective budgeting techniques for families"  
+    - content="Detailed content about family budgeting..."
+    - parent_id=[Family Finance category ID]
+    - knowledge_base_id=[current KB ID]
+  * NEVER use KnowledgeBaseGetArticleHierarchy for content creation - that's for reading only
 - For article-specific workflows with commands like "work on category 1", "focus on article 1", "main category 1":
   * Extract the article ID from the original request
   * Use KnowledgeBaseSetArticleContext tool with the current KB ID and extracted article ID

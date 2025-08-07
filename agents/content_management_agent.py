@@ -33,6 +33,9 @@ class ContentManagementAgent(BaseAgent):
         """Process content management requests and execute operations"""
         self.log("Processing content management request")
         
+        # Increment recursion counter
+        self.increment_recursions(state)
+        
         # Check for messages from Supervisor
         agent_messages = state.get("agent_messages", [])
         my_messages = [msg for msg in agent_messages if msg.recipient == self.name]
@@ -99,25 +102,47 @@ Current Knowledge Base ID: {state.get('knowledge_base_id', 'Not specified')}
 Current Section Context: {state.get('current_section', 'Not specified')}
 Original Request: {workflow_plan.get('original_request', 'Not provided')}
 
+CRITICAL INSTRUCTIONS FOR CONTENT CREATION:
+- If intent is "create_content":
+  * Analyze the original request to understand what content to create (categories, articles, topics)
+  * First create any missing categories using KnowledgeBaseInsertArticle with parent_id=null
+  * Then create sub-articles under the categories using KnowledgeBaseInsertArticle with appropriate parent_id
+  * Use meaningful titles and comprehensive content for each article
+  * Ensure proper hierarchical structure (categories as parent articles, topics as child articles)
+  * For "Family Finance" category example: create category first, then create articles like "Family Budgeting", "Teaching Kids About Money", etc.
+  * Always validate knowledge base context first before creating content
+  * REQUIRED FIELDS for KnowledgeBaseInsertArticle tool:
+    - title: Clear, descriptive title for the article/category
+    - content: Comprehensive content with helpful information (minimum 200 characters)
+    - author_id: Always use 1 (default system user for AI-generated content)
+    - parent_id: Use null for main categories, or parent article ID for sub-articles
+    - knowledge_base_id: Use the current knowledge base ID from state
+  * DO NOT use KnowledgeBaseGetArticleHierarchy for creation - that's only for reading existing content
+  * EXAMPLE for creating "Family Finance" category:
+    article={{"title": "Family Finance", "content": "Comprehensive guide covering all aspects of family financial planning, including budgeting for families, teaching children about money, saving for family goals, and managing household finances effectively. This category includes strategies for dual-income families, single-parent financial planning, and teaching financial literacy to children of all ages.", "author_id": 1, "parent_id": null, "knowledge_base_id": 1}}
+  * EXAMPLE for creating sub-article under Family Finance:
+    article={{"title": "Family Budgeting Strategies", "content": "Effective budgeting techniques specifically designed for families, including methods for tracking family expenses, allocating funds for children's needs, planning for family activities, and managing variable family income. Topics include envelope budgeting for families, zero-based budgeting with kids, and emergency fund planning for households.", "author_id": 1, "parent_id": [Family Finance category ID], "knowledge_base_id": 1}}
+
 CRITICAL INSTRUCTIONS FOR KNOWLEDGE BASE CONTEXT SETTING:
 - If intent is "set_knowledge_base_context" and original request contains "use kb X":
-  * Extract the KB ID (X) from the original request
-  * Use the KnowledgeBaseSetContext tool with knowledge_base_id="X"
-  * Do NOT use KnowledgeBaseGetKnowledgeBases for this purpose
+  * Extract the KB ID (X) from the original request: "{workflow_plan.get('original_request', 'Not provided')}"
+  * Use the KnowledgeBaseSetContext tool with knowledge_base_id="X" (where X is the number from the request)
+  * Do NOT use KnowledgeBaseGetKnowledgeBases for this purpose - that's only for listing available KBs
+  * REQUIRED: Call KnowledgeBaseSetContext to actually set the context
+
+Examples:
+- Original request "use kb 1" → call KnowledgeBaseSetContext with knowledge_base_id="1"
+- Original request "ok, let use kb 1" → call KnowledgeBaseSetContext with knowledge_base_id="1"  
+- Original request "switch to kb 2" → call KnowledgeBaseSetContext with knowledge_base_id="2"
 
 CRITICAL INSTRUCTIONS FOR CONTENT GAP ANALYSIS:
 - If intent is "analyze_content_gaps":
-  * First retrieve the complete hierarchy using KnowledgeBaseGetArticleHierarchy
-  * Analyze the existing content structure for gaps, missing topics, and opportunities
-  * Identify areas where coverage could be improved or expanded
-  * Suggest specific new articles that would enhance the knowledge base
-  * Provide detailed rationale for each recommendation based on content analysis
-  * Focus on practical, valuable additions that fill genuine gaps
-  * Consider topics that would bridge existing categories or provide deeper coverage
-  * Look for popular financial topics not currently covered
-  * Suggest beginner, intermediate, and advanced level content where appropriate
-
-Example: If original request is "use kb 1", call KnowledgeBaseSetContext with knowledge_base_id="1"
+  * Use the KnowledgeBaseAnalyzeContentGaps tool with the current knowledge_base_id
+  * This dedicated tool performs comprehensive gap analysis and provides specific recommendations
+  * DO NOT just retrieve and display the hierarchy - use the specialized analysis tool
+  * The tool will analyze content structure, identify missing topics, and suggest improvements
+  * Present the analysis results clearly to the user with actionable recommendations
+  * Focus on providing value through specific, practical content suggestions
 
 Please execute the appropriate knowledge base operations to fulfill this request.
 Use the available tools to complete all necessary steps.
@@ -165,10 +190,11 @@ IMPORTANT:
                     
                     # Check if this was a KnowledgeBaseSetContext call and update state
                     if tool_call.get("name") == "KnowledgeBaseSetContext" and tool_result.get("success"):
-                        kb_context = tool_result.get("result", {})
-                        if kb_context.get("success"):
-                            state["knowledge_base_id"] = kb_context.get("knowledge_base_id")
-                            self.log(f"Updated knowledge base context to: {kb_context.get('knowledge_base_id')}")
+                        # KnowledgeBaseSetContext returns data directly, not nested under "result"
+                        if tool_result.get("success"):
+                            state["knowledge_base_id"] = tool_result.get("knowledge_base_id")
+                            state["knowledge_base_name"] = tool_result.get("knowledge_base_name")
+                            self.log(f"Updated knowledge base context to: {tool_result.get('knowledge_base_name')} (ID: {tool_result.get('knowledge_base_id')})")
                     
                     # Check if this was a KnowledgeBaseSetArticleContext call and update state
                     elif tool_call.get("name") == "KnowledgeBaseSetArticleContext" and tool_result.get("success"):

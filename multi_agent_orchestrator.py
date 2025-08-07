@@ -230,11 +230,11 @@ class MultiAgentOrchestrator:
             print(f"🔄 UserProxy routing: Found supervisor message for HumanMessage, routing to supervisor")
             return "supervisor"
         
-        # If the last message is an AIMessage (response from UserProxy), continue listening for user input
-        # This maintains conversation continuity instead of ending the conversation
+        # If the last message is an AIMessage (response from AI), END to wait for new user input
+        # This prevents infinite loops and allows the chat interface to handle the next user input
         if message_type == 'AIMessage':
-            print(f"🔄 UserProxy routing: Last message is AIMessage, CONTINUING conversation (waiting for user input)")
-            return "user_proxy"  # Keep conversation alive for follow-up questions
+            print(f"🔄 UserProxy routing: Last message is AIMessage, ENDING conversation (waiting for user input)")
+            return "end"  # End the conversation to wait for new user input
         
         # For other message types, continue with UserProxy
         print(f"🔄 UserProxy routing: Continuing with UserProxy (message type: {message_type})")
@@ -489,7 +489,7 @@ class MultiAgentOrchestrator:
             "article_id": self.session_state.get("article_id"),
             "task_context": self.session_state.get("task_context"),
             "session_data": self.session_state.get("session_data", {}),
-            "processed_workflow_messages": set()
+            "processed_workflow_messages": []
         }
         
         events = self.graph.stream(

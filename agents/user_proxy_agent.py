@@ -4,6 +4,7 @@ from langchain_openai import AzureChatOpenAI
 from agents.base_agent import BaseAgent
 from agents.agent_types import AgentState, AgentMessage
 from prompts.multi_agent_prompts import prompts
+from utils.robust_intent_classifier import RobustIntentClassifier
 
 
 class UserProxyAgent(BaseAgent):
@@ -15,10 +16,15 @@ class UserProxyAgent(BaseAgent):
     def __init__(self, llm: AzureChatOpenAI):
         system_prompt = prompts.user_proxy_prompt()
         super().__init__("UserProxy", llm, system_prompt)
+        # Initialize the robust intent classifier
+        self.intent_classifier = RobustIntentClassifier()
     
     def process(self, state: AgentState) -> AgentState:
         """Process user input and coordinate with other agents"""
         self.log("Processing user interaction")
+        
+        # Increment recursion counter
+        self.increment_recursions(state)
         
         # Check what type of message we have
         messages = state.get("messages", [])
@@ -60,7 +66,7 @@ class UserProxyAgent(BaseAgent):
         my_messages = [msg for msg in agent_messages if msg.recipient == self.name]
         
         # Get list of already processed message timestamps to avoid reprocessing
-        processed_messages = state.get("processed_workflow_messages", set())
+        processed_messages = state.get("processed_workflow_messages", [])
         
         if my_messages:
             # Handle workflow completion/error messages
@@ -84,8 +90,9 @@ class UserProxyAgent(BaseAgent):
                 
                 # Mark this specific message as processed
                 if "processed_workflow_messages" not in state:
-                    state["processed_workflow_messages"] = set()
-                state["processed_workflow_messages"].add(message_id)
+                    state["processed_workflow_messages"] = []
+                if message_id not in state["processed_workflow_messages"]:
+                    state["processed_workflow_messages"].append(message_id)
                 
                 self.log("Provided workflow result to user - conversation complete")
                 return state
@@ -102,17 +109,28 @@ class UserProxyAgent(BaseAgent):
             self.log("Message already sent to supervisor, waiting for response")
             return state
         
-        # Handle special requests for conversation history
-        if any(phrase in user_message_content.lower() for phrase in ['last 3 commands', 'recent commands', 'conversation history', 'what did i ask']):
+        # Analyze user intent for new messages using robust classifier
+        user_intent, confidence = self.intent_classifier.classify_intent(user_message_content)
+        state["user_intent"] = user_intent
+        state["intent_confidence"] = confidence
+        
+        self.log(f"Intent classified as: {user_intent} (confidence: {confidence:.1f}%)")
+        
+        # Check if this is a follow-up request that needs conversation context
+        if self._is_context_dependent_request(user_message_content, user_intent):
+            self.log("Context-dependent request detected, including conversation history")
+            recent_context = self._get_conversation_context(state)
+            if recent_context:
+                enhanced_message = f"Context from previous conversation: {recent_context}\n\nNew user request: {user_message_content}"
+                user_message_content = enhanced_message
+        
+        # Handle conversation history requests directly (no need to involve other agents)
+        if user_intent == "get_conversation_history":
             conversation_history = self._get_recent_conversation_history(state, 3)
             ai_message = AIMessage(content=conversation_history)
             state["messages"].append(ai_message)
             self.log("Provided conversation history to user")
             return state
-        
-        # Analyze user intent for new messages
-        user_intent = self._analyze_user_intent(user_message_content)
-        state["user_intent"] = user_intent
         
         # Extract and track section context from user message
         section_context = self._extract_section_context(user_message_content, state)
@@ -139,6 +157,7 @@ class UserProxyAgent(BaseAgent):
             state["current_agent"] = "Supervisor"
             
             self.log(f"Routing request to Supervisor Agent. Intent: {user_intent}")
+            self.log(f"State updated: current_agent={state.get('current_agent')}, recursions={state.get('recursions')}")
         else:
             # Handle simple responses directly (help, general inquiries)
             response = self._generate_direct_response(user_message_content)
@@ -149,84 +168,12 @@ class UserProxyAgent(BaseAgent):
         
         return state
     
-    def _analyze_user_intent(self, user_message: str) -> str:
-        """Analyze user message to determine intent"""
-        user_message_lower = user_message.lower()
-        
-        # Knowledge base context commands
-        if any(keyword in user_message_lower for keyword in ['use kb', 'switch to kb', 'select kb']):
-            return "set_knowledge_base_context"
-        
-        # Content analysis and recommendations (check BEFORE create patterns to avoid conflicts)
-        analysis_patterns = [
-            'suggest content', 'suggest articles', 'content gaps', 'gaps in coverage',
-            'review the kb', 'assess the kb', 'analyze the kb', 'improve the kb',
-            'what can be added', 'articles that can be added', 'suggestions on articles',
-            'general assessment', 'content analysis', 'make the kb better',
-            'offer up content', 'look at my current kb', 'suggest new articles',
-            'analyze the knowledge base', 'analyze any gaps', 'gaps in the current content',
-            'analyze.*gaps', 'what.*missing', 'areas.*missing'
-        ]
-        if any(pattern in user_message_lower for pattern in analysis_patterns):
-            return "analyze_content_gaps"
-        
-        # Knowledge base management intents (check these after analysis to avoid conflicts)
-        if any(keyword in user_message_lower for keyword in ['create', 'add', 'new', 'insert']):
-            if 'knowledge base' in user_message_lower:
-                return "create_knowledge_base"
-            elif 'article' in user_message_lower:
-                return "create_article"
-            elif 'tag' in user_message_lower:
-                return "create_tag"
-            else:
-                return "create_content"
-        
-        # Article context commands - when user wants to focus on a specific article
-        if any(pattern in user_message_lower for pattern in [
-            'work on category', 'focus on category', 'work on article', 'focus on article',
-            'work on main category', 'focus on main category', 'category ', 'article ',
-            'work with category', 'focus on item', 'work on id', 'focus on id'
-        ]):
-            return "set_article_context"
-        
-        if any(keyword in user_message_lower for keyword in ['update', 'edit', 'modify', 'change']):
-            return "update_content"
-            
-        if any(keyword in user_message_lower for keyword in ['delete', 'remove']):
-            return "delete_content"
-            
-        if any(keyword in user_message_lower for keyword in ['search', 'find', 'look for', 'query']):
-            return "search_content"
-        
-        # Check for filtered section requests (specific section + focus/display words)
-        section_keywords = ['budget', 'investment', 'tax', 'insurance', 'estate', 'debt', 'income', 'retirement', 'real estate', 'healthcare']
-        display_keywords = ['show', 'display', 'list', 'get', 'articles under', 'articles in', 'focus on', 'work on']
-        focus_keywords = ['focus', 'work', 'concentrate', 'articles', 'content', 'under', 'in', 'section']
-        
-        # Context reference patterns - when user refers to previous context with "that", "it", etc.
-        context_reference_patterns = [
-            'hierarchy under that', 'under that', 'articles under that', 'content under that',
-            'under it', 'articles under it', 'content under it', 'hierarchy under it',
-            'show me under', 'list under', 'get under', 'display under'
-        ]
-        
-        has_section = any(section in user_message_lower for section in section_keywords)
-        has_display = any(display in user_message_lower for display in display_keywords)
-        has_focus = any(word in user_message_lower for word in focus_keywords)
-        has_context_reference = any(pattern in user_message_lower for pattern in context_reference_patterns)
-        
-        # Match patterns like "focus on budgeting", "work on investment", "get budgeting articles", etc.
-        # OR contextual references like "hierarchy under that", "articles under that"
-        if (has_section and (has_display or has_focus)) or has_context_reference:
-            return "retrieve_filtered_content"
-            
-        if any(keyword in user_message_lower for keyword in ['show', 'display', 'list', 'get', 'hierarchy']):
-            return "retrieve_content"
-            
-        if any(keyword in user_message_lower for keyword in ['help', 'how', 'what', 'explain']):
-            return "help_request"
-            
-        return "general_inquiry"
+    # OLD INTENT CLASSIFICATION METHOD - REPLACED WITH ROBUST CLASSIFIER
+    # def _analyze_user_intent(self, user_message: str) -> str:
+    #     """DEPRECATED: Old brittle intent classification - replaced with RobustIntentClassifier"""
+    #     # This method has been replaced with the RobustIntentClassifier
+    #     # which provides much better reliability and confidence scoring
+    #     pass
     
     def _get_recent_conversation_history(self, state: AgentState, count: int = 3) -> str:
         """Get the last N user commands from conversation history"""
@@ -245,6 +192,61 @@ class UserProxyAgent(BaseAgent):
             history_text += f"{i}. \"{content}\"\n"
         
         return history_text
+    
+    def _is_context_dependent_request(self, user_message: str, intent: str) -> bool:
+        """Check if this request depends on previous conversation context"""
+        context_indicators = [
+            "these", "those", "them", "that", "this", "the above", "mentioned above",
+            "all the additions", "make these", "implement all", "go ahead and",
+            "the recommendations", "what you suggested", "your suggestions"
+        ]
+        
+        # Personal/identity questions that require conversation context
+        identity_questions = [
+            "what is my name", "what's my name", "my name is", "who am i", 
+            "what did i say", "what did i tell you", "remember me", "do you remember",
+            "i told you", "i mentioned", "i said earlier", "as i said"
+        ]
+        
+        message_lower = user_message.lower()
+        has_context_indicators = any(indicator in message_lower for indicator in context_indicators)
+        has_identity_questions = any(question in message_lower for question in identity_questions)
+        
+        # Also check if intent suggests follow-up action
+        follow_up_intents = ["create_content", "update_content"]
+        
+        return has_context_indicators or has_identity_questions or (intent in follow_up_intents and len(message_lower.split()) < 10)
+    
+    def _get_conversation_context(self, state: AgentState, lookback_messages: int = 3) -> str:
+        """Extract relevant context from recent conversation"""
+        messages = state.get("messages", [])
+        if len(messages) < 2:
+            return ""
+        
+        # Look for recent messages that might contain relevant context
+        recent_context = []
+        for msg in messages[-lookback_messages:]:
+            if hasattr(msg, '__class__'):
+                content = msg.content if hasattr(msg, 'content') else str(msg)
+                msg_type = "User" if msg.__class__.__name__ == 'HumanMessage' else "Assistant"
+                
+                # For personal/identity questions, include recent user introductions and AI acknowledgments
+                if any(keyword in content.lower() for keyword in [
+                    "my name is", "i am", "call me", "hello", "hi", "nice to meet you",
+                    "gap analysis", "recommendations", "additions", "missing", 
+                    "priority", "trending", "create", "add", "implement"
+                ]):
+                    recent_context.append(f"{msg_type}: {content}")
+        
+        if recent_context:
+            # Return all relevant context messages
+            context_text = "\n".join(recent_context)
+            # Truncate to prevent context overflow
+            if len(context_text) > 1000:
+                context_text = context_text[:1000] + "... [truncated]"
+            return context_text
+        
+        return ""
     
     def _extract_section_context(self, user_message: str, state: AgentState) -> Optional[str]:
         """Extract section context from user message"""

@@ -30,4 +30,4 @@ class AgentState(TypedDict):
     last_tool_result: Optional[str]  # Track the last tool result to avoid repetition
     task_context: Optional[Dict[str, Any]]  # Current task context
     session_data: Optional[Dict[str, Any]]  # Session-level data
-    processed_workflow_messages: Optional[set]  # Track processed workflow message IDs
+    processed_workflow_messages: Optional[list]  # Track processed workflow message IDs

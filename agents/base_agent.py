@@ -20,6 +20,11 @@ class BaseAgent(ABC):
         """Process the current state and return updated state"""
         pass
     
+    def increment_recursions(self, state: AgentState) -> None:
+        """Increment the recursion counter"""
+        current_recursions = state.get("recursions", 0)
+        state["recursions"] = current_recursions + 1
+    
     def should_activate(self, state: AgentState) -> bool:
         """Determine if this agent should be activated given the current state"""
         return state.get("current_agent") == self.name

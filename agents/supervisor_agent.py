@@ -20,6 +20,9 @@ class SupervisorAgent(BaseAgent):
         """Process coordination requests and manage workflows"""
         self.log("Processing supervision request")
         
+        # Increment recursion counter
+        self.increment_recursions(state)
+        
         # Check for messages from other agents
         agent_messages = state.get("agent_messages", [])
         
@@ -33,7 +36,12 @@ class SupervisorAgent(BaseAgent):
         # Get the latest message
         latest_message = my_messages[-1]
         
-        # Analyze the request and determine workflow
+        # Check if this is a response from Content Management Agent
+        if latest_message.sender == "ContentManagement" and latest_message.message_type == "workflow_response":
+            self.log("Processing workflow response from Content Management Agent")
+            return self.process_cm_response(state, latest_message)
+        
+        # Otherwise, it's an initial request - analyze and plan workflow
         workflow_plan = self._analyze_and_plan(latest_message)
         
         # Update task context
@@ -86,7 +94,8 @@ Respond with a clear plan for the Content Management Agent.
             "description": plan_content,
             "steps": self._extract_workflow_steps(user_intent, content),
             "validation_required": self._requires_validation(user_intent),
-            "risk_level": self._assess_risk_level(user_intent)
+            "risk_level": self._assess_risk_level(user_intent),
+            "original_request": content  # Include original user request for content extraction
         }
         
         return workflow_plan
@@ -149,6 +158,16 @@ Respond with a clear plan for the Content Management Agent.
                 {"action": "validate_kb_context", "description": "Ensure knowledge base context is established"},
                 {"action": "search_content", "description": "Perform search operation"},
                 {"action": "format_results", "description": "Format search results"}
+            ]
+        elif intent == "create_content":
+            steps = [
+                {"action": "validate_kb_context", "description": "Ensure knowledge base context is established"},
+                {"action": "analyze_content_request", "description": "Analyze the content creation request"},
+                {"action": "determine_content_type", "description": "Determine if creating categories, articles, or both"},
+                {"action": "create_categories_if_needed", "description": "Create any missing categories first"},
+                {"action": "create_articles", "description": "Create the requested articles with appropriate content"},
+                {"action": "validate_content_structure", "description": "Ensure content is properly structured and linked"},
+                {"action": "confirm_content_creation", "description": "Confirm successful content creation to user"}
             ]
         elif intent == "analyze_content_gaps":
             steps = [
