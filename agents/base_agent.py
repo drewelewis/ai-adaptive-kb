@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
 from langchain_openai import AzureChatOpenAI
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
-from agents.agent_types import AgentState, AgentMessage
+from .agent_types import AgentState, AgentMessage
 import datetime
 
 

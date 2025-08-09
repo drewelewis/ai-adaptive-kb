@@ -1,5 +1,5 @@
 """
-Enhanced Multi-Agent Orchestrator with PostgreSQL State Management
+Multi-Agent Orchestrator with PostgreSQL State Management
 
 This module integrates the robust PostgreSQL state manager with the multi-agent system,
 providing persistent, transactional state management with audit trails and recovery capabilities.
@@ -30,13 +30,19 @@ except ImportError:
     from langgraph.checkpoint import MemorySaver
 
 # Import existing agents
-from agents.user_proxy_agent import UserProxyAgent
-from agents.supervisor_agent import SupervisorAgent
-from agents.content_management_agent import ContentManagementAgent
-from agents.agent_types import AgentState
+from .user_proxy_agent import UserProxyAgent
+from .supervisor_agent import SupervisorAgent
+from .content_management_agent import ContentManagementAgent
+from .router_agent import RouterAgent
+from .agent_types import AgentState
+
+# Import new autonomous content creation agents
+from .content_planner_agent import ContentPlannerAgent
+from .content_creator_agent import ContentCreatorAgent
+from .content_reviewer_agent import ContentReviewerAgent
 
 # Import PostgreSQL state manager
-from utils.postgresql_state_manager import PostgreSQLStateManager
+from .postgresql_state_manager import PostgreSQLStateManager
 
 # Import existing operations
 from operations.knowledge_base_operations import KnowledgeBaseOperations
@@ -45,15 +51,15 @@ from operations.knowledge_base_operations import KnowledgeBaseOperations
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
-class EnhancedMultiAgentOrchestrator:
+class Orchestrator:
     """
-    Enhanced orchestrator with PostgreSQL-backed state management
+    Multi-agent orchestrator with PostgreSQL-backed state management
     """
     
     def __init__(self, session_id: Optional[str] = None):
         self.session_id = session_id or str(uuid.uuid4())
         
-        print(f"🚀 Initializing Enhanced Multi-Agent System (Session: {self.session_id[:8]}...)")
+        print(f"🚀 Initializing Multi-Agent System (Session: {self.session_id[:8]}...)")
         
         # Initialize PostgreSQL state manager
         try:
@@ -73,9 +79,15 @@ class EnhancedMultiAgentOrchestrator:
         )
         
         # Initialize agents
+        self.router = RouterAgent(self.llm)
         self.user_proxy = UserProxyAgent(self.llm)
         self.supervisor = SupervisorAgent(self.llm)
         self.content_manager = ContentManagementAgent(self.llm)
+        
+        # Initialize new autonomous content creation agents
+        self.content_planner = ContentPlannerAgent(self.llm)
+        self.content_creator = ContentCreatorAgent(self.llm)
+        self.content_reviewer = ContentReviewerAgent(self.llm)
         
         # Initialize knowledge base operations
         self.kb_ops = KnowledgeBaseOperations()
@@ -84,8 +96,9 @@ class EnhancedMultiAgentOrchestrator:
         self.memory = MemorySaver()
         self.graph = self._build_graph()
         
-        print("🤖 Enhanced Multi-Agent Knowledge Base System initialized!")
-        print("Agents loaded: UserProxy, Supervisor, ContentManagement")
+        print("🤖 Autonomous Content Creation System initialized!")
+        print("Agents loaded: Router, UserProxy, Supervisor, ContentManagement")
+        print("Content Creation: ContentPlanner, ContentCreator, ContentReviewer")
         print("State management: PostgreSQL with ACID transactions")
         
         # Initialize session if needed
@@ -141,24 +154,40 @@ class EnhancedMultiAgentOrchestrator:
             print(f"⚠️  Could not create demo knowledge base: {e}")
     
     def _build_graph(self) -> StateGraph:
-        """Build the LangGraph workflow with enhanced state management"""
+        """Build the LangGraph workflow with PostgreSQL state management and autonomous content creation"""
         workflow = StateGraph(AgentState)
         
-        # Add nodes for each agent
+        # Add nodes for each agent including new content creation agents
         workflow.add_node("UserProxy", self._process_user_proxy)
+        workflow.add_node("Router", self._process_router)
         workflow.add_node("Supervisor", self._process_supervisor)
         workflow.add_node("ContentManagement", self._process_content_management)
+        workflow.add_node("ContentPlanner", self._process_content_planner)
+        workflow.add_node("ContentCreator", self._process_content_creator)
+        workflow.add_node("ContentReviewer", self._process_content_reviewer)
         
-        # Set entry point
+        # Set entry point - UserProxy handles initial user input
         workflow.set_entry_point("UserProxy")
         
-        # Add routing logic
+        # Add routing logic with autonomous content creation workflow
         workflow.add_conditional_edges(
             "UserProxy",
             self._route_from_user_proxy,
             {
-                "Supervisor": "Supervisor",
+                "Router": "Router",
+                "UserProxy": "UserProxy", 
+                "END": END
+            }
+        )
+        
+        workflow.add_conditional_edges(
+            "Router",
+            self._route_from_router,
+            {
+                "UserProxy": "UserProxy",
+                "Supervisor": "Supervisor", 
                 "ContentManagement": "ContentManagement",
+                "ContentPlanner": "ContentPlanner",
                 "END": END
             }
         )
@@ -169,6 +198,39 @@ class EnhancedMultiAgentOrchestrator:
             {
                 "UserProxy": "UserProxy",
                 "ContentManagement": "ContentManagement",
+                "ContentPlanner": "ContentPlanner",
+                "ContentCreator": "ContentCreator",
+                "ContentReviewer": "ContentReviewer",
+                "END": END
+            }
+        )
+        
+        workflow.add_conditional_edges(
+            "ContentPlanner",
+            self._route_from_content_planner,
+            {
+                "UserProxy": "UserProxy",
+                "ContentCreator": "ContentCreator",
+                "END": END
+            }
+        )
+        
+        workflow.add_conditional_edges(
+            "ContentCreator", 
+            self._route_from_content_creator,
+            {
+                "ContentReviewer": "ContentReviewer",
+                "ContentCreator": "ContentCreator",
+                "END": END
+            }
+        )
+        
+        workflow.add_conditional_edges(
+            "ContentReviewer",
+            self._route_from_content_reviewer,
+            {
+                "UserProxy": "UserProxy",
+                "ContentCreator": "ContentCreator", 
                 "END": END
             }
         )
@@ -191,6 +253,38 @@ class EnhancedMultiAgentOrchestrator:
         result_state = self.user_proxy.process(state)
         return result_state
     
+    def _process_router(self, state: AgentState) -> AgentState:
+        """Process Router agent for intent classification and routing"""
+        result_state = self.router.process(state)
+        # Update PostgreSQL state with intent classification results
+        if "user_intent" in result_state:
+            # Convert percentage confidence to decimal (0-100 -> 0.0-1.0)
+            raw_confidence = result_state.get("intent_confidence", 0.0)
+            print(f"🔍 Raw confidence from router: {raw_confidence} (type: {type(raw_confidence)})")
+            
+            confidence = raw_confidence
+            if confidence > 1.0:  # If it's a percentage, convert to decimal
+                confidence = confidence / 100.0
+                print(f"🔄 Converted confidence: {confidence} (type: {type(confidence)})")
+            else:
+                print(f"📌 Using confidence as-is: {confidence} (type: {type(confidence)})")
+            
+            user_intent = result_state["user_intent"]
+            print(f"🔍 Updating session context: user_intent='{user_intent}', intent_confidence={confidence}")
+            
+            try:
+                self.state_manager.update_session_context(
+                    agent="Router",
+                    user_intent=user_intent,
+                    intent_confidence=confidence
+                )
+                print(f"✅ Session context updated successfully")
+            except Exception as e:
+                print(f"❌ Failed to update session context: {e}")
+                # Don't re-raise - let the system continue
+                print("⚠️ Continuing without session context update")
+        return result_state
+    
     def _process_supervisor(self, state: AgentState) -> AgentState:
         """Process Supervisor agent with simplified state management"""
         result_state = self.supervisor.process(state)
@@ -202,7 +296,7 @@ class EnhancedMultiAgentOrchestrator:
         return result_state
     
     def _route_from_user_proxy(self, state: AgentState) -> str:
-        """Enhanced routing from UserProxy with state awareness"""
+        """Routing from UserProxy - route to Router for intent classification"""
         current_agent = state.get("current_agent")
         recursions = state.get("recursions", 0)
         
@@ -222,18 +316,60 @@ class EnhancedMultiAgentOrchestrator:
             )
             return "END"
         
-        if current_agent == "Supervisor":
-            print("➡️ Routing to Supervisor")
-            return "Supervisor"
-        elif current_agent == "ContentManagement":
-            print("➡️ Routing to ContentManagement")
-            return "ContentManagement"
+        # Route to Router for intent classification, or handle agent messages
+        if current_agent == "Router":
+            print("➡️ Routing to Router for intent classification")
+            return "Router"
+        elif current_agent == "UserProxy":
+            # Check if there are agent messages to process
+            agent_messages = state.get("agent_messages", [])
+            my_messages = [msg for msg in agent_messages if msg.recipient == "UserProxy"]
+            if my_messages:
+                # Handle workflow completion messages
+                print("📥 UserProxy processing agent messages")
+                return "UserProxy"
+            else:
+                print("🏁 UserProxy ending workflow - no messages to process")
+                return "END"
         else:
             print(f"🏁 Ending workflow (current_agent={current_agent})")
             return "END"
     
+    def _route_from_router(self, state: AgentState) -> str:
+        """Routing from Router based on intent classification"""
+        current_agent = state.get("current_agent")
+        recursions = state.get("recursions", 0)
+        user_intent = state.get("user_intent", "general_inquiry")
+        
+        print(f"🔀 Router routing: current_agent={current_agent}, intent={user_intent}, recursions={recursions}")
+        
+        if recursions >= 50:
+            print("🛑 Router: Maximum recursions reached")
+            self.state_manager.update_session_context(
+                agent="Router",
+                conversation_state="completed"
+            )
+            return "END"
+        
+        # Route based on the determined target agent from Router
+        if current_agent == "UserProxy":
+            print("➡️ Router routing back to UserProxy for direct response")
+            return "UserProxy"
+        elif current_agent == "Supervisor":
+            print("➡️ Router routing to Supervisor for workflow management")
+            return "Supervisor"
+        elif current_agent == "ContentManagement":
+            print("➡️ Router routing to ContentManagement for KB operations")
+            return "ContentManagement"
+        elif current_agent == "ContentPlanner":
+            print("➡️ Router routing to ContentPlanner for autonomous content creation")
+            return "ContentPlanner"
+        else:
+            print(f"🏁 Router ending workflow (current_agent={current_agent})")
+            return "END"
+    
     def _route_from_supervisor(self, state: AgentState) -> str:
-        """Enhanced routing from Supervisor"""
+        """Routing from Supervisor"""
         current_agent = state.get("current_agent")
         recursions = state.get("recursions", 0)
         
@@ -258,7 +394,7 @@ class EnhancedMultiAgentOrchestrator:
             return "END"
     
     def _route_from_content_management(self, state: AgentState) -> str:
-        """Enhanced routing from ContentManagement"""
+        """Routing from ContentManagement"""
         current_agent = state.get("current_agent")
         recursions = state.get("recursions", 0)
         
@@ -277,7 +413,7 @@ class EnhancedMultiAgentOrchestrator:
             return "END"
     
     def process_message(self, content: str, role: str = "user") -> Any:
-        """Process a message with enhanced state management"""
+        """Process a message with PostgreSQL state management"""
         print(f"\\n🎯 Processing {role} message: {content[:100]}...")
         
         # Update session state
@@ -342,7 +478,7 @@ class EnhancedMultiAgentOrchestrator:
         # Create initial LangGraph state with full conversation history
         initial_state = {
             "messages": langchain_messages,  # Full conversation history
-            "recursions": 0,
+            "recursions": 0,  # Always reset recursions for new user message
             "current_agent": "UserProxy",
             "agent_messages": [],
             "consecutive_tool_calls": 0,
@@ -350,6 +486,9 @@ class EnhancedMultiAgentOrchestrator:
             "processed_workflow_messages": [],  # Use list instead of set for JSON serialization
             **postgres_state  # Merge in PostgreSQL state
         }
+        
+        # Force reset recursions to 0 even if PostgreSQL has stale value
+        initial_state["recursions"] = 0
         
         # Execute workflow
         try:
@@ -442,6 +581,74 @@ class EnhancedMultiAgentOrchestrator:
     def get_session_summary(self) -> Dict[str, Any]:
         """Get comprehensive session summary"""
         return self.state_manager.get_state_summary()
+    
+    # ============================================================================
+    # NEW AUTONOMOUS CONTENT CREATION AGENT PROCESSORS
+    # ============================================================================
+    
+    def _process_content_planner(self, state: AgentState) -> AgentState:
+        """Process ContentPlanner agent for strategic planning and structure design"""
+        try:
+            return self.content_planner.process(state)
+        except Exception as e:
+            print(f"❌ Error in ContentPlanner processing: {e}")
+            state["error"] = str(e)
+            return state
+    
+    def _process_content_creator(self, state: AgentState) -> AgentState:
+        """Process ContentCreator agent for expert content generation"""
+        try:
+            return self.content_creator.process(state)
+        except Exception as e:
+            print(f"❌ Error in ContentCreator processing: {e}")
+            state["error"] = str(e)
+            return state
+    
+    def _process_content_reviewer(self, state: AgentState) -> AgentState:
+        """Process ContentReviewer agent for quality assurance and optimization"""
+        try:
+            return self.content_reviewer.process(state)
+        except Exception as e:
+            print(f"❌ Error in ContentReviewer processing: {e}")
+            state["error"] = str(e)
+            return state
+    
+    # ============================================================================
+    # NEW ROUTING METHODS FOR AUTONOMOUS CONTENT CREATION
+    # ============================================================================
+    
+    def _route_from_content_planner(self, state: AgentState) -> str:
+        """Route from ContentPlanner based on planning result"""
+        current_agent = state.get("current_agent")
+        
+        if current_agent == "UserProxy":
+            return "UserProxy"  # Clarification needed
+        elif current_agent == "ContentCreator":
+            return "ContentCreator"  # Proceed with content creation
+        else:
+            return "END"
+    
+    def _route_from_content_creator(self, state: AgentState) -> str:
+        """Route from ContentCreator based on creation result"""
+        current_agent = state.get("current_agent")
+        
+        if current_agent == "ContentReviewer":
+            return "ContentReviewer"  # Send for review
+        elif current_agent == "ContentCreator":
+            return "ContentCreator"  # Continue creation (revision cycle)
+        else:
+            return "END"
+    
+    def _route_from_content_reviewer(self, state: AgentState) -> str:
+        """Route from ContentReviewer based on review result"""
+        current_agent = state.get("current_agent")
+        
+        if current_agent == "UserProxy":
+            return "UserProxy"  # Final result ready
+        elif current_agent == "ContentCreator":
+            return "ContentCreator"  # Needs revision
+        else:
+            return "END"
     
     def get_conversation_history(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Get conversation history from PostgreSQL"""

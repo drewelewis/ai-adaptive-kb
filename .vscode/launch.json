@@ -4,6 +4,7 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
+        
         {
             "name": "Python Debugger: Current File",
             "type": "debugpy",
@@ -35,7 +36,7 @@
             "name": "Debug: Multi Agent Orchestrator",
             "type": "debugpy",
             "request": "launch",
-            "program": "multi_agent_orchestrator.py",
+            "program": "agents/orchestrator.py",
             "console": "integratedTerminal",
             "internalConsoleOptions": "openOnSessionStart",
             "preLaunchTask": "Clear Terminal"

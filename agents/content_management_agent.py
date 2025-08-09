@@ -1,8 +1,8 @@
 from typing import List, Dict, Any, Optional
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 from langchain_openai import AzureChatOpenAI
-from agents.base_agent import BaseAgent
-from agents.agent_types import AgentState, AgentMessage
+from .base_agent import BaseAgent
+from .agent_types import AgentState, AgentMessage
 from tools.knowledge_base_tools import KnowledgeBaseTools
 from prompts.knowledge_base_prompts import prompts as kb_prompts
 from prompts.multi_agent_prompts import prompts as ma_prompts
@@ -42,11 +42,22 @@ class ContentManagementAgent(BaseAgent):
         
         if not my_messages:
             self.log("No workflow requests found")
+            # If no specific workflow, check if this is a direct retrieve request
+            last_message = state.get("messages", [])
+            if last_message:
+                last_user_msg = last_message[-1].content
+                if "get_knowledge_bases_with_ids" in last_user_msg or "kbs =" in last_user_msg:
+                    return self._handle_direct_retrieval_request(state, last_user_msg)
             return state
         
         # Get the latest workflow request
         latest_request = my_messages[-1]
         workflow_plan = latest_request.metadata.get("workflow_plan", {})
+        
+        # If no workflow plan, create one based on the request
+        if not workflow_plan:
+            self.log("No workflow plan found - creating one from request")
+            workflow_plan = self._create_workflow_from_request(latest_request)
         
         self.log(f"Executing workflow: {workflow_plan.get('intent', 'unknown')}")
         
@@ -54,23 +65,37 @@ class ContentManagementAgent(BaseAgent):
         try:
             result = self._execute_content_workflow(workflow_plan, state)
             
+            # Extract intent from workflow plan for response metadata
+            workflow_intent = workflow_plan.get("intent", "unknown")
+            
             # Create success response for Supervisor
             response = self.create_message(
                 recipient="Supervisor",
                 message_type="workflow_response",
                 content=result["message"],
-                metadata={"success": True, "results": result["data"]}
+                metadata={
+                    "success": True, 
+                    "results": result["data"],
+                    "intent": workflow_intent  # Pass intent for proper response formatting
+                }
             )
             
         except Exception as e:
             self.log(f"Error executing workflow: {str(e)}", "ERROR")
+            
+            # Extract intent from workflow plan for error response metadata
+            workflow_intent = workflow_plan.get("intent", "unknown")
             
             # Create error response for Supervisor
             response = self.create_message(
                 recipient="Supervisor", 
                 message_type="workflow_response",
                 content=f"Content management operation failed: {str(e)}",
-                metadata={"success": False, "error": str(e)}
+                metadata={
+                    "success": False, 
+                    "error": str(e),
+                    "intent": workflow_intent  # Pass intent for proper error formatting
+                }
             )
         
         # Add response to agent messages
@@ -81,13 +106,162 @@ class ContentManagementAgent(BaseAgent):
         
         return state
     
+    def _handle_direct_retrieval_request(self, state: AgentState, request: str) -> AgentState:
+        """Handle direct retrieval requests like get_knowledge_bases_with_ids()"""
+        self.log("Handling direct retrieval request")
+        
+        try:
+            if "get_knowledge_bases_with_ids" in request:
+                # Execute the KnowledgeBaseGetKnowledgeBases tool
+                kb_tool = None
+                for tool in self.tools:
+                    if tool.name == "KnowledgeBaseGetKnowledgeBases":
+                        kb_tool = tool
+                        break
+                
+                if kb_tool:
+                    result = kb_tool._run()
+                    kbs_info = []
+                    if result:
+                        for kb in result:
+                            kbs_info.append({
+                                "id": kb.id,
+                                "name": kb.title,
+                                "description": kb.description,
+                                "category": kb.category
+                            })
+                    
+                    # Create response for user
+                    response_content = f"Found {len(kbs_info)} knowledge bases:\n"
+                    for kb in kbs_info:
+                        response_content += f"• KB {kb['id']}: {kb['name']} ({kb['category']})\n"
+                    
+                    # Send response to UserProxy
+                    user_response = self.create_message(
+                        recipient="UserProxy",
+                        message_type="direct_response",
+                        content=response_content,
+                        metadata={"kbs": kbs_info, "success": True}
+                    )
+                    
+                    state["agent_messages"].append(user_response)
+                    state["current_agent"] = "UserProxy"
+                    
+                else:
+                    raise Exception("KnowledgeBaseGetKnowledgeBases tool not found")
+            
+        except Exception as e:
+            self.log(f"Error handling direct request: {str(e)}", "ERROR")
+            
+            # Send error response to UserProxy
+            error_response = self.create_message(
+                recipient="UserProxy",
+                message_type="direct_response",
+                content=f"Error retrieving knowledge bases: {str(e)}",
+                metadata={"success": False, "error": str(e)}
+            )
+            
+            state["agent_messages"].append(error_response)
+            state["current_agent"] = "UserProxy"
+        
+        return state
+    
+    def _create_workflow_from_request(self, request_message: AgentMessage) -> Dict[str, Any]:
+        """Create a workflow plan from a request message"""
+        content = request_message.content
+        metadata = request_message.metadata or {}
+        intent = metadata.get("intent", "retrieve_content")  # Get intent from metadata
+        
+        # Create basic workflow plan
+        workflow_plan = {
+            "intent": intent,
+            "description": f"Execute knowledge base operation: {content}",
+            "steps": [
+                {
+                    "action": "execute_kb_operation",
+                    "description": content,
+                    "tool_required": True
+                }
+            ],
+            "original_request": content
+        }
+        
+        return workflow_plan
+
     def _execute_content_workflow(self, workflow_plan: Dict[str, Any], state: AgentState) -> Dict[str, Any]:
         """Execute the content management workflow using available tools"""
         intent = workflow_plan.get("intent", "")
         steps = workflow_plan.get("steps", [])
+        original_request = workflow_plan.get("original_request", "")
         
         self.log(f"Executing {len(steps)} workflow steps for intent: {intent}")
         
+        # Special handling for set_knowledge_base_context intent
+        if intent == "set_knowledge_base_context":
+            self.log(f"DEBUG: Handling KB context setting for request: '{original_request}'")
+            
+            # Extract KB ID using regex before LLM processing
+            import re
+            kb_id_patterns = [
+                r'kb\s+(\d+)',           # "kb 3", "kb  3"  
+                r'use\s+kb\s+(\d+)',     # "use kb 3"
+                r'switch\s+to\s+kb\s+(\d+)',  # "switch to kb 3"
+                r'set\s+kb\s+(\d+)',     # "set kb 3"
+                r'knowledge\s+base\s+(\d+)',  # "knowledge base 3"
+            ]
+            
+            extracted_kb_id = None
+            for pattern in kb_id_patterns:
+                match = re.search(pattern, original_request.lower())
+                if match:
+                    extracted_kb_id = match.group(1)
+                    self.log(f"DEBUG: Extracted KB ID '{extracted_kb_id}' using pattern '{pattern}'")
+                    break
+            
+            if extracted_kb_id:
+                # Call the tool directly with extracted ID
+                self.log(f"DEBUG: Calling KnowledgeBaseSetContext directly with KB ID: {extracted_kb_id}")
+                try:
+                    set_context_tool = next((t for t in self.tools if t.name == 'KnowledgeBaseSetContext'), None)
+                    if set_context_tool:
+                        # Use correct tool input format
+                        tool_input = {"knowledge_base_id": extracted_kb_id}
+                        result = set_context_tool.run(tool_input)
+                        self.log(f"DEBUG: Tool result: {result}")
+                        
+                        if result.get("success"):
+                            # Update state
+                            state["knowledge_base_id"] = result.get("knowledge_base_id")
+                            state["knowledge_base_name"] = result.get("knowledge_base_name")
+                            self.log(f"Updated knowledge base context to: {result.get('knowledge_base_name')} (ID: {result.get('knowledge_base_id')})")
+                            
+                            return {
+                                "success": True,
+                                "message": result.get("message", f"Knowledge base context set to KB {extracted_kb_id}"),
+                                "data": result
+                            }
+                        else:
+                            return {
+                                "success": False,
+                                "message": f"Failed to set KB context: {result.get('error', 'Unknown error')}",
+                                "data": result
+                            }
+                    else:
+                        self.log("DEBUG: KnowledgeBaseSetContext tool not found")
+                        return {
+                            "success": False,
+                            "message": "KnowledgeBaseSetContext tool not available",
+                            "data": {}
+                        }
+                except Exception as e:
+                    self.log(f"DEBUG: Error calling tool directly: {str(e)}")
+                    # Fall back to LLM processing
+                    pass
+            else:
+                self.log(f"DEBUG: Could not extract KB ID from request: '{original_request}'")
+                # Fall back to LLM processing
+        
+        # Original LLM-based processing for other intents or fallback
         # Create messages for LLM with tools
         messages = [
             self.get_system_message(),
@@ -100,7 +274,7 @@ Steps: {[step['description'] for step in steps]}
 
 Current Knowledge Base ID: {state.get('knowledge_base_id', 'Not specified')}
 Current Section Context: {state.get('current_section', 'Not specified')}
-Original Request: {workflow_plan.get('original_request', 'Not provided')}
+Original Request: {original_request}
 
 CRITICAL INSTRUCTIONS FOR CONTENT CREATION:
 - If intent is "create_content":
@@ -124,16 +298,23 @@ CRITICAL INSTRUCTIONS FOR CONTENT CREATION:
     article={{"title": "Family Budgeting Strategies", "content": "Effective budgeting techniques specifically designed for families, including methods for tracking family expenses, allocating funds for children's needs, planning for family activities, and managing variable family income. Topics include envelope budgeting for families, zero-based budgeting with kids, and emergency fund planning for households.", "author_id": 1, "parent_id": [Family Finance category ID], "knowledge_base_id": 1}}
 
 CRITICAL INSTRUCTIONS FOR KNOWLEDGE BASE CONTEXT SETTING:
-- If intent is "set_knowledge_base_context" and original request contains "use kb X":
-  * Extract the KB ID (X) from the original request: "{workflow_plan.get('original_request', 'Not provided')}"
-  * Use the KnowledgeBaseSetContext tool with knowledge_base_id="X" (where X is the number from the request)
-  * Do NOT use KnowledgeBaseGetKnowledgeBases for this purpose - that's only for listing available KBs
-  * REQUIRED: Call KnowledgeBaseSetContext to actually set the context
+- If intent is "set_knowledge_base_context":
+  * Look at the original request to extract the knowledge base ID number
+  * Common patterns: "use kb 4", "switch to kb 2", "set kb 1", "kb 3"
+  * Extract just the number (e.g., "4" from "use kb 4")
+  * Call KnowledgeBaseSetContext with knowledge_base_id="[extracted_number]"
+  * REQUIRED: Must call KnowledgeBaseSetContext tool to actually set the context
+  * Do NOT use KnowledgeBaseGetKnowledgeBases - that's only for listing available KBs
+
+Step-by-step process:
+1. Look at original request: "{workflow_plan.get('original_request', 'Not provided')}"
+2. Extract the KB ID number from the request
+3. Call KnowledgeBaseSetContext with that number as a string
 
 Examples:
-- Original request "use kb 1" → call KnowledgeBaseSetContext with knowledge_base_id="1"
-- Original request "ok, let use kb 1" → call KnowledgeBaseSetContext with knowledge_base_id="1"  
-- Original request "switch to kb 2" → call KnowledgeBaseSetContext with knowledge_base_id="2"
+- Original request "use kb 1" → extract "1" → call KnowledgeBaseSetContext(knowledge_base_id="1")
+- Original request "switch to kb 4" → extract "4" → call KnowledgeBaseSetContext(knowledge_base_id="4")  
+- Original request "kb 2" → extract "2" → call KnowledgeBaseSetContext(knowledge_base_id="2")
 
 CRITICAL INSTRUCTIONS FOR CONTENT GAP ANALYSIS:
 - If intent is "analyze_content_gaps":
@@ -150,6 +331,9 @@ Use the available tools to complete all necessary steps.
 IMPORTANT: 
 - Always validate knowledge base context first
 - Use proper error handling for all operations
+- Include the actual tool results in your response to the user
+- For retrieval operations, show the complete list of items found
+- For context setting, confirm the operation with specific details
 - Provide comprehensive feedback on results
 - Maintain content organization best practices
             """)
@@ -189,20 +373,22 @@ IMPORTANT:
                     combined_results.append(str(tool_result))
                     
                     # Check if this was a KnowledgeBaseSetContext call and update state
-                    if tool_call.get("name") == "KnowledgeBaseSetContext" and tool_result.get("success"):
-                        # KnowledgeBaseSetContext returns data directly, not nested under "result"
-                        if tool_result.get("success"):
-                            state["knowledge_base_id"] = tool_result.get("knowledge_base_id")
-                            state["knowledge_base_name"] = tool_result.get("knowledge_base_name")
-                            self.log(f"Updated knowledge base context to: {tool_result.get('knowledge_base_name')} (ID: {tool_result.get('knowledge_base_id')})")
+                    if tool_call.get("name") == "KnowledgeBaseSetContext":
+                        # Tool result is wrapped in "result" field by _execute_tool_call
+                        kb_result = tool_result.get("result", {})
+                        if kb_result.get("success"):
+                            state["knowledge_base_id"] = kb_result.get("knowledge_base_id")
+                            state["knowledge_base_name"] = kb_result.get("knowledge_base_name")
+                            self.log(f"Updated knowledge base context to: {kb_result.get('knowledge_base_name')} (ID: {kb_result.get('knowledge_base_id')})")
                     
                     # Check if this was a KnowledgeBaseSetArticleContext call and update state
-                    elif tool_call.get("name") == "KnowledgeBaseSetArticleContext" and tool_result.get("success"):
-                        article_context = tool_result.get("result", {})
-                        if article_context.get("success"):
-                            state["knowledge_base_id"] = article_context.get("knowledge_base_id")
-                            state["article_id"] = article_context.get("article_id")
-                            self.log(f"Updated article context to: {article_context.get('article_id')} in KB {article_context.get('knowledge_base_id')}")
+                    elif tool_call.get("name") == "KnowledgeBaseSetArticleContext":
+                        # Tool result is wrapped in "result" field by _execute_tool_call
+                        article_result = tool_result.get("result", {})
+                        if article_result.get("success"):
+                            state["knowledge_base_id"] = article_result.get("knowledge_base_id")
+                            state["article_id"] = article_result.get("article_id")
+                            self.log(f"Updated article context to: {article_result.get('article_id')} in KB {article_result.get('knowledge_base_id')}")
                             
                 except Exception as e:
                     self.log(f"Tool execution error: {str(e)}", "ERROR")
@@ -218,9 +404,10 @@ IMPORTANT:
                 response.content = response.content + repetition_warning if response.content else repetition_warning
             
             return {
-                "message": response.content,
+                "message": response.content if response.content.strip() else combined_result_str,
                 "data": {
                     "tool_results": tool_results,
+                    "combined_results": combined_result_str,
                     "workflow_completed": True,
                     "intent": intent
                 }

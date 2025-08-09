@@ -70,8 +70,14 @@ class SessionContext:
         """Validate session context"""
         if not self.session_id:
             return False
-        if self.intent_confidence is not None and not 0.0 <= self.intent_confidence <= 1.0:
-            return False
+        if self.intent_confidence is not None:
+            # Ensure it's a number and within valid range
+            try:
+                confidence_float = float(self.intent_confidence)
+                if not 0.0 <= confidence_float <= 1.0:
+                    return False
+            except (TypeError, ValueError):
+                return False
         if self.conversation_state not in ["active", "waiting", "completed", "error"]:
             return False
         return True
@@ -106,11 +112,11 @@ class PostgreSQLStateManager:
         
         # Database connection parameters from environment
         self.db_config = {
-            'host': os.getenv('POSTGRES_HOST'),
-            'port': os.getenv('POSTGRES_PORT', 5432),
-            'dbname': os.getenv('POSTGRES_DB'),
-            'user': os.getenv('POSTGRES_USER'),
-            'password': os.getenv('POSTGRES_PASSWORD')
+            'host': os.getenv('POSTGRES_HOST') or os.getenv('DB_HOST'),
+            'port': os.getenv('POSTGRES_PORT') or os.getenv('DB_PORT', 5432),
+            'dbname': os.getenv('POSTGRES_DB') or os.getenv('DB_NAME'),
+            'user': os.getenv('POSTGRES_USER') or os.getenv('DB_USER'),
+            'password': os.getenv('POSTGRES_PASSWORD') or os.getenv('DB_PASSWORD')
         }
         
         # Initialize database schema
@@ -331,7 +337,24 @@ class PostgreSQLStateManager:
             current_context.last_updated = datetime.now(timezone.utc).isoformat()
             
             if not current_context.validate():
-                raise ValueError("Invalid session context update")
+                # Provide detailed validation error
+                error_details = []
+                if not current_context.session_id:
+                    error_details.append("session_id is missing or empty")
+                if current_context.intent_confidence is not None:
+                    try:
+                        confidence_float = float(current_context.intent_confidence)
+                        if not 0.0 <= confidence_float <= 1.0:
+                            error_details.append(f"intent_confidence ({current_context.intent_confidence}, type: {type(current_context.intent_confidence)}) must be between 0.0 and 1.0")
+                    except (TypeError, ValueError):
+                        error_details.append(f"intent_confidence ({current_context.intent_confidence}, type: {type(current_context.intent_confidence)}) is not a valid number")
+                if current_context.conversation_state not in ["active", "waiting", "completed", "error"]:
+                    error_details.append(f"conversation_state ({current_context.conversation_state}) must be one of: active, waiting, completed, error")
+                
+                error_msg = f"Invalid session context update: {'; '.join(error_details)}"
+                print(f"❌ Validation failed: {error_msg}")
+                print(f"🔍 Context values: session_id='{current_context.session_id}', intent_confidence={current_context.intent_confidence}, conversation_state='{current_context.conversation_state}'")
+                raise ValueError(error_msg)
             
             # Save to database
             new_context = asdict(current_context)

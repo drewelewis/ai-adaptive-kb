@@ -1,1 +1,1 @@
-docker compose -f docker-compose.yaml down_
+docker compose -f docker-compose.yaml down
