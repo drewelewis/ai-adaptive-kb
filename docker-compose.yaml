@@ -18,7 +18,42 @@ services:
     container_name: kb_adminer
     restart: always
     ports:
-      - 8080:8080 
+      - 8080:8080
+  kb-gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: kb_gitlab
+    
+    restart: always
+    ports:
+      - "8929:8929"
+      - "10022:22"
+    environment:
+      GITLAB_ROOT_EMAIL: "drewelewis@microsoft.com"
+      GITLAB_ROOT_PASSWORD: "password"
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'http://localhost:8929'
+        gitlab_rails['gitlab_shell_ssh_port'] = 10022
+        gitlab_rails['lfs_enabled'] = true
+        gitlab_rails['gitlab_default_can_create_group'] = true
+        
+    volumes:
+      - gitlab_data:/var/opt/gitlab
+      - gitlab_logs:/var/log/gitlab
+      - gitlab_config:/etc/gitlab 
+  gitlab-mcp-server:
+    image: ghcr.io/nguyenvanduocit/gitlab-mcp:latest # Or the specific version you need
+    container_name: gitlab-mcp-server
+    ports:
+      - "8100:8080" # Map host port 8100 to container port 8080 (default MCP server port)
+    environment:
+      - GITLAB_URL=${GITLAB_URL:-http://localhost:8929} # Your GitLab instance URL
+      - GITLAB_TOKEN=${GITLAB_PAT} # Use your actual GitLab Personal Access Token from .env
+    volumes:
+    - gitlab_mcp_server_config:/app/config # Optional: Mount a volume for configuration files
 
 volumes:
   postgres_data:
+  gitlab_data:
+  gitlab_logs:
+  gitlab_config:
+  gitlab_mcp_server_config:

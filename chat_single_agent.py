@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from prompts.knowledge_base_prompts import prompts
 from tools.knowledge_base_tools import KnowledgeBaseTools
 from tools.github_tools import GithubTools
+from tools.gitlab_tools import GitLabTools
  
 load_dotenv(override=True)
 current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -42,12 +43,73 @@ system_message = f"""Today's date and time: {current_datetime}
 
 {prompts.master_prompt()}
 
+SYSTEM ARCHITECTURE - CLEAR SEPARATION OF CONCERNS:
+
+POSTGRESQL DATABASE (Content Storage):
+- Stores actual knowledge base articles, content, and metadata
+- Contains article text, tags, knowledge base definitions, and search indexes
+- Primary data storage and retrieval system for KB content
+- All KB content operations (create, read, update, delete) use PostgreSQL
+
+GITLAB PROJECTS (Project Management):
+- Manages workflows and project tracking for KB development
+- Contains issues for planning, content generation, quality review, and deployment  
+- Tracks the PROCESS of creating and maintaining knowledge bases (not the content itself)
+- Provides structured project management and progress tracking
+
+INTEGRATION PRINCIPLE:
+- PostgreSQL = "WHAT" (the actual knowledge base content and data)
+- GitLab = "HOW" (the project management and workflow for developing that content)
+- These systems work together but serve completely different purposes
+
 GITHUB INTEGRATION CAPABILITIES:
 You also have access to GitHub tools that allow you to:
 - Get a list of repositories for any GitHub user
 - Browse files and directory structure in any public GitHub repository
 - Read the content of specific files in GitHub repositories
 - Create issues in GitHub repositories (with proper permissions)
+
+GITLAB INTEGRATION CAPABILITIES:
+You have comprehensive GitLab integration using the python-gitlab library that allows you to:
+
+PROJECT MANAGEMENT:
+- Get a list of all GitLab projects accessible with your token
+- Browse project details including settings, visibility, and enabled features
+- Access repository files and directory structure in GitLab projects
+- Read the content of specific files from GitLab repositories
+
+ISSUE AND WORK ITEM MANAGEMENT:
+- View existing issues in GitLab projects (with state filtering: opened, closed, all)
+- Get detailed information about specific issues including descriptions and task completion status
+- Create new issues in GitLab projects with titles, descriptions, and labels
+- Access work items (tasks) - automatically falls back to issues for older GitLab versions
+- Get work item details with type information when available
+
+KNOWLEDGE BASE PROJECT MANAGEMENT:
+- Create new GitLab projects specifically for knowledge base management (without repositories by default)
+- **AUTOMATIC INTEGRATION**: When creating new knowledge bases, GitLab projects are automatically created and linked
+- Create GitLab projects that are automatically linked to existing knowledge bases in the database
+- Find knowledge bases that are linked to specific GitLab projects
+- Set up complete KB management workflows with standardized issues
+- Update knowledge base records with GitLab project IDs for integrated workflow management
+- Automatically create planning, content generation, quality review, and deployment issues
+- **PROJECT RENAMING**: Modern GitLab versions now support direct project renaming with proper permissions!
+- **DIRECT RENAME**: Use GitLabRenameProjectTool to rename projects directly (requires admin/maintainer permissions)
+- **UPDATE ALL ATTRIBUTES**: Use GitLabUpdateProjectTool to update names, descriptions, visibility, and topics
+- **SMART FALLBACK**: If direct renaming fails, comprehensive guidance is provided for migration alternatives
+- Archive or delete projects when necessary for workflow management
+- Provide intelligent guidance that tries direct renaming first, then suggests migration if needed
+- Track KB development progress through structured GitLab project management
+- Integrate KB generation with GitLab's issue tracking and project organization
+- Projects focus on workflow management rather than code storage (content stays in PostgreSQL)
+- **ERROR HANDLING**: If GitLab project creation fails, detailed troubleshooting guidance is provided
+
+When working with GitLab:
+- Always start by getting the list of projects if the user wants to explore GitLab
+- Use the project ID (not project name) for all GitLab operations
+- Issues and work items are interchangeable - work items fall back to issues in older GitLab instances
+- You can browse files, analyze code, create documentation, and manage project tasks
+- Direct python-gitlab library integration provides reliable and consistent API access
 
 When working with GitHub:
 - Always start by getting the user's repositories if they want to work with their own code
@@ -57,14 +119,40 @@ When working with GitHub:
 - You can help analyze code, documentation, and project organization
 
 INTEGRATED WORKFLOW:
-You can now help users with both knowledge base management AND GitHub repository exploration:
-- Document code from GitHub repositories into knowledge bases
-- Create knowledge base articles about GitHub projects
-- Help organize development documentation
-- Analyze and summarize code from repositories
-- Create issues based on knowledge base content or analysis
+You provide comprehensive project management across knowledge bases, GitHub, and GitLab:
 
-Always ask for clarification if you're unsure whether the user wants to work with knowledge bases, GitHub repositories, or both.
+KNOWLEDGE BASE LIFECYCLE MANAGEMENT:
+- Create knowledge base content and store articles in PostgreSQL database
+- Simultaneously create dedicated GitLab projects for managing the KB development process
+- Set up structured project management workflows with planning, content generation, quality review, and deployment issues
+- Track KB development progress through GitLab's project management features (while content stays in PostgreSQL)
+- Use GitLab issues to coordinate KB tasks, reviews, and updates (content operations still use PostgreSQL)
+- Document code from GitHub or GitLab repositories into PostgreSQL knowledge bases with GitLab project tracking
+
+DOCUMENTATION AND KNOWLEDGE MANAGEMENT:
+- Store knowledge base articles and content in PostgreSQL database
+- Use GitLab projects to manage the development workflow for those knowledge bases
+- Document code from GitHub or GitLab repositories into PostgreSQL knowledge bases  
+- Create knowledge base articles about projects from both Git platforms (stored in PostgreSQL)
+- Help organize development documentation from multiple sources
+- Analyze and summarize codebases from repositories on both platforms
+
+PROJECT AND TASK MANAGEMENT:
+- Create GitLab projects for each knowledge base to manage the development process (not store content)
+- Use GitLab issues to track KB planning, content generation, review, and deployment workflows
+- Create issues/work items based on knowledge base content or code analysis
+- Compare projects and codebases across different Git platforms
+- Help track KB development tasks through GitLab projects while content remains in PostgreSQL
+- Manage project documentation workflow systematically (content storage in PostgreSQL, workflow in GitLab)
+
+DEVELOPMENT WORKFLOW SUPPORT:
+- Browse and analyze repository structures and code files
+- Help with code documentation, README creation, and project organization
+- Support issue creation for bugs, features, or documentation tasks
+- Bridge the gap between code analysis and project management
+- Integrate KB generation directly with GitLab project management for complete lifecycle tracking
+
+Always ask for clarification if you're unsure whether the user wants to work with knowledge bases, GitHub repositories, GitLab projects, or any combination of these capabilities.
 """
 
 llm = AzureChatOpenAI(
@@ -76,6 +164,7 @@ llm = AzureChatOpenAI(
 
 kb_tools = KnowledgeBaseTools()
 github_tools = GithubTools()
+gitlab_tools = GitLabTools()
 
 # Manual ToolNode implementation (workaround for missing langgraph.prebuilt.ToolNode)
 class ToolNode:
@@ -156,8 +245,8 @@ class ToolNode:
         return {"messages": tool_messages}
 
 
-# Combine knowledge base and GitHub tools
-tools = kb_tools.tools() + github_tools.tools()
+# Combine knowledge base, GitHub, and GitLab tools
+tools = kb_tools.tools() + github_tools.tools() + gitlab_tools.tools()
 llm_with_tools = llm.bind_tools(tools)
 
 def stream_graph_updates(role: str, content: str):
@@ -302,29 +391,32 @@ graph = build_graph()
 
 def main():
     print("=" * 70)
-    print("🤖 AI KNOWLEDGE BASE & GITHUB INTEGRATION CHAT")
+    print("🤖 AI KNOWLEDGE BASE, GITHUB & GITLAB INTEGRATION CHAT")
     print("=" * 70)
     print("🎯 Capabilities:")
     print("   📚 Knowledge Base Management - Create, update, and organize knowledge bases")
     print("   🐙 GitHub Integration - Explore repositories, read files, and create issues")
+    print("   🦊 GitLab Integration - Explore projects, read files, and manage issues")
     print("   🔄 Integrated Workflows - Document code, analyze projects, and more!")
     print("=" * 70)
     
     # Count available tools
     kb_tool_count = len(kb_tools.tools())
     github_tool_count = len(github_tools.tools())
-    total_tools = kb_tool_count + github_tool_count
+    gitlab_tool_count = len(gitlab_tools.tools())
+    total_tools = kb_tool_count + github_tool_count + gitlab_tool_count
     
     print(f"🛠️  Available Tools: {total_tools} total")
     print(f"   • Knowledge Base Tools: {kb_tool_count}")
     print(f"   • GitHub Tools: {github_tool_count}")
+    print(f"   • GitLab Tools: {gitlab_tool_count}")
     print("=" * 70)
     print("💬 Commands:")
     print("   • Type '/q' or '/quit' to exit")
     print("   • Type '/reset' or '/r' to clear conversation state and start fresh")
     print("   • Type '/tools' to show tool status")
     print("   • Type your question or command to interact with the AI")
-    print("   • Ask about knowledge bases, GitHub repositories, or both!")
+    print("   • Ask about knowledge bases, GitHub repositories, GitLab projects, or any combination!")
     print("=" * 70)
     
     while True:
@@ -346,6 +438,7 @@ def main():
                 print("🛠️  Tool Status:")
                 print(f"   • Knowledge Base Tools: {len(kb_tools.tools())} available")
                 print(f"   • GitHub Tools: {len(github_tools.tools())} available")
+                print(f"   • GitLab Tools: {len(gitlab_tools.tools())} available")
                 print(f"   • Total Tools: {len(tools)} available")
                 print(f"   • Max Recursions: {MAX_RECURSIONS}")
                 print(f"   • Soft Limit Warning: {SOFT_RECURSION_LIMIT}")

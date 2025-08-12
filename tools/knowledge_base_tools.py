@@ -131,12 +131,21 @@ class KnowledgeBaseTools():
     class KnowledgeBaseInsertKnowledgeBase(BaseTool):
         name: str = "KnowledgeBaseInsertKnowledgeBase"
         description: str = """
-            useful for when you need to insert a new Knowledge Base.
+            Create a new Knowledge Base with automatic GitLab project integration.
+            This tool will:
+            1. Create the knowledge base in the database
+            2. Automatically create a GitLab project for project management
+            3. Link the KB and GitLab project together
+            4. Set up KB management issues for workflow tracking
+            
+            If any step fails, the tool will provide guidance for manual completion.
         """.strip()
         return_direct: bool = False
 
         class KnowledgeBaseInsertKnowledgeBaseInputModel(BaseModel):
             knowledge_base: KnowledgeBase.InsertModel = Field(description="knowledge_base")
+            create_gitlab_project: bool = Field(default=True, description="Whether to automatically create a GitLab project (default: True)")
+            gitlab_project_name: Optional[str] = Field(default=None, description="Custom GitLab project name (auto-generated if not provided)")
 
             # Validation method to check parameter input from agent
             @field_validator("knowledge_base")
@@ -148,10 +157,200 @@ class KnowledgeBaseTools():
                 
         args_schema: Optional[ArgsSchema] = KnowledgeBaseInsertKnowledgeBaseInputModel
     
-        def _run(self, knowledge_base: KnowledgeBase.InsertModel) -> KnowledgeBase.BaseModel:
-            knowledge_base=kb_Operations.insert_knowledge_base(knowledge_base)
-            return knowledge_base
+        def _run(self, knowledge_base: KnowledgeBase.InsertModel, create_gitlab_project: bool = True, gitlab_project_name: Optional[str] = None) -> str:
+            try:
+                # Step 1: Create the knowledge base
+                kb_id = kb_Operations.insert_knowledge_base(knowledge_base)
+                if not kb_id:
+                    return "❌ Failed to create knowledge base. Please check the database connection and try again."
+                
+                result = f"✅ **Knowledge Base Created Successfully!**\n\n"
+                result += f"📚 **KB ID:** {kb_id}\n"
+                result += f"📝 **Name:** {knowledge_base.name}\n"
+                result += f"📄 **Description:** {knowledge_base.description}\n\n"
+                
+                # Step 2: Create GitLab project if requested
+                if create_gitlab_project:
+                    try:
+                        # Import GitLab operations
+                        from operations.gitlab_operations import GitLabOperations
+                        gitlab_ops = GitLabOperations()
+                        
+                        # Generate project name if not provided
+                        if not gitlab_project_name:
+                            # Convert KB name to a valid project name
+                            gitlab_project_name = knowledge_base.name.lower().replace(' ', '-').replace(':', '').replace('?', '').replace('!', '').replace('.', '').replace(',', '').replace('"', '').replace("'", '').replace('(', '').replace(')', '')
+                            # Truncate if too long and ensure it's valid
+                            gitlab_project_name = gitlab_project_name[:50].strip('-')
+                        
+                        # Create GitLab project linked to KB
+                        project = gitlab_ops.create_project_for_knowledge_base(
+                            kb_id=kb_id,
+                            name=gitlab_project_name,
+                            description=f"Project management for {knowledge_base.name} knowledge base",
+                            visibility="public"
+                        )
+                        
+                        if project:
+                            result += f"🦊 **GitLab Project Created & Linked!**\n"
+                            result += f"🆔 **Project ID:** {project['id']}\n"
+                            result += f"📁 **Project Name:** {project['name']}\n"
+                            result += f"🔗 **Project URL:** {project.get('web_url', 'Not available')}\n"
+                            result += f"👁️ **Visibility:** {project.get('visibility', 'Unknown')}\n\n"
+                            
+                            # Step 3: Create KB management issues
+                            try:
+                                issues = gitlab_ops.create_kb_management_issues(project['id'], knowledge_base.name)
+                                if issues:
+                                    result += f"📋 **KB Management Issues Created:** {len(issues)} issues\n"
+                                    result += f"   Ready for project management and workflow tracking!\n\n"
+                                else:
+                                    result += f"⚠️ **Note:** GitLab project created but issues creation failed.\n"
+                                    result += f"   You can manually create issues in the GitLab project.\n\n"
+                            except Exception as e:
+                                result += f"⚠️ **Issues Creation Warning:** {str(e)}\n"
+                                result += f"   GitLab project is ready, but you may need to create issues manually.\n\n"
+                        else:
+                            result += f"⚠️ **GitLab Project Creation Failed**\n"
+                            result += f"   Knowledge base created successfully, but GitLab integration failed.\n"
+                            result += f"   **Next Steps:**\n"
+                            result += f"   1. Check GitLab server connection (should be at {gitlab_ops.gitlab_url})\n"
+                            result += f"   2. Verify GitLab token permissions\n"
+                            result += f"   3. Manually create project or use: GitLabCreateProjectForKBTool\n\n"
+                    
+                    except ImportError:
+                        result += f"⚠️ **GitLab Integration Unavailable**\n"
+                        result += f"   GitLab operations not available. Knowledge base created without project integration.\n"
+                        result += f"   Install GitLab dependencies to enable automatic project creation.\n\n"
+                    except Exception as e:
+                        result += f"⚠️ **GitLab Integration Error:** {str(e)}\n"
+                        result += f"   Knowledge base created successfully, but GitLab project creation failed.\n"
+                        result += f"   **Troubleshooting:**\n"
+                        result += f"   - Check if GitLab server is running\n"
+                        result += f"   - Verify GITLAB_PAT environment variable is set\n"
+                        result += f"   - Ensure GitLab token has project creation permissions\n"
+                        result += f"   **Manual Creation:** Use GitLabCreateProjectForKBTool with KB ID {kb_id}\n\n"
+                
+                result += f"🎯 **Next Steps:**\n"
+                result += f"   1. Use KnowledgeBaseSetContext with KB ID {kb_id}\n"
+                result += f"   2. Start adding articles with KnowledgeBaseInsertArticle\n"
+                result += f"   3. Track progress in GitLab project (if created)\n"
+                result += f"   4. Use GitLabCreateKBManagementIssuesTool if issues weren't created automatically\n"
+                
+                return result
+                
+            except Exception as e:
+                return f"❌ **Knowledge Base Creation Failed:** {str(e)}\n\nPlease check your input parameters and database connection."
     
+    class KnowledgeBaseCreateGitLabProject(BaseTool):
+        name: str = "KnowledgeBaseCreateGitLabProject"
+        description: str = """
+            Create a GitLab project for an existing Knowledge Base.
+            Use this tool when automatic GitLab project creation failed during KB creation,
+            or when you want to add GitLab integration to an existing KB.
+            
+            This tool will:
+            1. Create a GitLab project
+            2. Link it to the specified knowledge base
+            3. Set up KB management issues
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseCreateGitLabProjectInputModel(BaseModel):
+            knowledge_base_id: str = Field(description="ID of the existing knowledge base")
+            gitlab_project_name: Optional[str] = Field(default=None, description="Custom GitLab project name (auto-generated if not provided)")
+            description: Optional[str] = Field(default=None, description="Custom project description")
+            visibility: str = Field(default="public", description="Project visibility: private, internal, or public")
+
+            @field_validator("knowledge_base_id")
+            def validate_kb_id(cls, v):
+                if not v:
+                    raise ValueError("KnowledgeBaseCreateGitLabProject error: knowledge_base_id parameter is empty")
+                return v
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseCreateGitLabProjectInputModel
+    
+        def _run(self, knowledge_base_id: str, gitlab_project_name: Optional[str] = None, description: Optional[str] = None, visibility: str = "public") -> str:
+            try:
+                # Step 1: Verify the knowledge base exists
+                kb = kb_Operations.get_knowledge_base_by_id(knowledge_base_id)
+                if not kb:
+                    return f"❌ **Knowledge Base Not Found:** No knowledge base found with ID {knowledge_base_id}.\n\nPlease check the KB ID and try again."
+                
+                # Check if KB already has a GitLab project
+                if kb.gitlab_project_id:
+                    return f"⚠️ **GitLab Project Already Exists:** Knowledge Base '{kb.name}' (ID: {knowledge_base_id}) is already linked to GitLab project ID {kb.gitlab_project_id}.\n\nUse GitLabGetProjectDetailsTool to view project details or GitLabCreateKBManagementIssuesTool to add issues."
+                
+                result = f"🔧 **Creating GitLab Project for Knowledge Base...**\n\n"
+                result += f"📚 **KB:** {kb.name} (ID: {knowledge_base_id})\n\n"
+                
+                # Step 2: Create GitLab project
+                try:
+                    from operations.gitlab_operations import GitLabOperations
+                    gitlab_ops = GitLabOperations()
+                    
+                    # Generate project name if not provided
+                    if not gitlab_project_name:
+                        gitlab_project_name = kb.name.lower().replace(' ', '-').replace(':', '').replace('?', '').replace('!', '').replace('.', '').replace(',', '').replace('"', '').replace("'", '').replace('(', '').replace(')', '')
+                        gitlab_project_name = gitlab_project_name[:50].strip('-')
+                    
+                    # Generate description if not provided
+                    if not description:
+                        description = f"Project management for {kb.name} knowledge base"
+                    
+                    # Create GitLab project linked to KB
+                    project = gitlab_ops.create_project_for_knowledge_base(
+                        kb_id=int(knowledge_base_id),
+                        name=gitlab_project_name,
+                        description=description,
+                        visibility=visibility
+                    )
+                    
+                    if project:
+                        result += f"✅ **GitLab Project Created & Linked!**\n"
+                        result += f"🆔 **Project ID:** {project['id']}\n"
+                        result += f"📁 **Project Name:** {project['name']}\n"
+                        result += f"🔗 **Project URL:** {project.get('web_url', 'Not available')}\n"
+                        result += f"👁️ **Visibility:** {project.get('visibility', 'Unknown')}\n\n"
+                        
+                        # Step 3: Create KB management issues
+                        try:
+                            issues = gitlab_ops.create_kb_management_issues(project['id'], kb.name)
+                            if issues:
+                                result += f"📋 **KB Management Issues Created:** {len(issues)} issues\n"
+                                for issue in issues:
+                                    result += f"   • Issue #{issue.get('iid', 'N/A')}: {issue.get('title', 'No title')}\n"
+                                result += f"\n🎯 **Project is ready for KB development workflow!**\n"
+                            else:
+                                result += f"⚠️ **Issues Creation Failed:** Could not create management issues.\n"
+                                result += f"   You can manually create issues in the GitLab project.\n"
+                        except Exception as e:
+                            result += f"⚠️ **Issues Creation Error:** {str(e)}\n"
+                            result += f"   GitLab project created successfully, but issues need manual creation.\n"
+                    else:
+                        result += f"❌ **GitLab Project Creation Failed**\n"
+                        result += f"   **Troubleshooting Steps:**\n"
+                        result += f"   1. Check GitLab server connection (should be at {gitlab_ops.gitlab_url})\n"
+                        result += f"   2. Verify GitLab token permissions (GITLAB_PAT environment variable)\n"
+                        result += f"   3. Ensure project name '{gitlab_project_name}' doesn't already exist\n"
+                        result += f"   4. Check GitLab server has sufficient storage/project limits\n"
+                        
+                except ImportError:
+                    result += f"❌ **GitLab Integration Unavailable:** GitLab operations not available.\n"
+                    result += f"   Install GitLab dependencies to enable project creation.\n"
+                except Exception as e:
+                    result += f"❌ **GitLab Integration Error:** {str(e)}\n"
+                    result += f"   **Common Solutions:**\n"
+                    result += f"   - Verify GitLab server is running and accessible\n"
+                    result += f"   - Check GITLAB_PAT environment variable is set correctly\n"
+                    result += f"   - Ensure GitLab token has 'api' and 'write_repository' scopes\n"
+                    result += f"   - Try a different project name if there's a naming conflict\n"
+                
+                return result
+                
+            except Exception as e:
+                return f"❌ **Error:** {str(e)}\n\nPlease check the knowledge base ID and try again."
+
     # KonowledgeBase Update KnowledgeBase
     class KnowledgeBaseUpdateKnowledgeBase(BaseTool):
         name: str = "KnowledgeBaseUpdateKnowledgeBase"
@@ -687,6 +886,7 @@ class KnowledgeBaseTools():
             self.KnowledgeBaseSetContext(),
             self.KnowledgeBaseSetArticleContext(),
             self.KnowledgeBaseInsertKnowledgeBase(), 
+            self.KnowledgeBaseCreateGitLabProject(),
             self.KnowledgeBaseUpdateKnowledgeBase(),
             # Article tools
             self.KnowledgeBaseGetRootLevelArticles(), 

@@ -20,6 +20,7 @@ CREATE TABLE knowledge_base (
     author_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
     version INTEGER DEFAULT 1,
     is_active BOOLEAN DEFAULT TRUE,
+    gitlab_project_id INTEGER NULL, -- GitLab project ID for issue tracking and project management
     -- Audit fields
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

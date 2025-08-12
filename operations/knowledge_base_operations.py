@@ -59,9 +59,9 @@ class KnowledgeBaseOperations:
             with self._get_connection() as conn:
                 with conn.cursor() as cur:
                     sql = """UPDATE knowledge_base
-                             SET name = %s, description = %s, author_id = %s
+                             SET name = %s, description = %s, author_id = %s, gitlab_project_id = %s
                              WHERE id = %s RETURNING id;"""
-                    cur.execute(sql, (knowledge_base.name, knowledge_base.description, knowledge_base.author_id, knowledge_base.id))
+                    cur.execute(sql, (knowledge_base.name, knowledge_base.description, knowledge_base.author_id, knowledge_base.gitlab_project_id, knowledge_base.id))
                     id = cur.fetchone()[0]
                     conn.commit()
                     
@@ -72,12 +72,8 @@ class KnowledgeBaseOperations:
                         description=knowledge_base.description
                     )
                     
-                    updated_knowledge_base = KnowledgeBase.BaseModel(
-                        id=id,
-                        name=knowledge_base.name,
-                        description=knowledge_base.description,
-                        author_id=knowledge_base.author_id
-                    )
+                    # Fetch the complete updated record from database
+                    updated_knowledge_base = self.get_knowledge_base_by_id(str(id))
                     return updated_knowledge_base
         except Exception as e:
             DatabaseChangeLogger.log_error("UPDATE", "Knowledge Base", str(e), str(knowledge_base.id))
@@ -86,6 +82,33 @@ class KnowledgeBaseOperations:
         finally:
             if conn:
                 conn.close()    
+    
+    def update_knowledge_base_gitlab_project_id(self, knowledge_base_id: int, gitlab_project_id: int) -> bool:
+        """Update the GitLab project ID for an existing knowledge base"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor() as cur:
+                    sql = """UPDATE knowledge_base
+                             SET gitlab_project_id = %s, updated_at = CURRENT_TIMESTAMP
+                             WHERE id = %s;"""
+                    cur.execute(sql, (gitlab_project_id, knowledge_base_id))
+                    conn.commit()
+                    
+                    # Log the database change
+                    DatabaseChangeLogger.log_knowledge_base_update(
+                        kb_id=str(knowledge_base_id), 
+                        name=f"Updated GitLab project ID to {gitlab_project_id}", 
+                        description="GitLab project ID linkage"
+                    )
+                    
+                    return True
+        except Exception as e:
+            DatabaseChangeLogger.log_error("UPDATE", "Knowledge Base GitLab Project ID", str(e), str(knowledge_base_id))
+            print(f"An error occurred with KnowledgeBaseOperations.update_knowledge_base_gitlab_project_id: {e}")
+            return False
+        finally:
+            if conn:
+                conn.close()
         
     def get_knowledge_base_by_id(self, knowledge_base_id: str) -> Optional[KnowledgeBase.BaseModel]:
         try:
@@ -100,6 +123,22 @@ class KnowledgeBaseOperations:
                         return None
         except Exception as e:
             print(f"An error occurred with KnowledgeBaseOperations.get_knowledge_base_by_id: {e}")
+            return None
+    
+    def get_knowledge_base_by_gitlab_project_id(self, gitlab_project_id: int) -> Optional[KnowledgeBase.BaseModel]:
+        """Get a knowledge base by its linked GitLab project ID."""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    sql = "SELECT * FROM knowledge_base WHERE gitlab_project_id = %s;"
+                    cur.execute(sql, (gitlab_project_id,))
+                    knowledge_base = cur.fetchone()
+                    if knowledge_base:
+                        return KnowledgeBase.BaseModel(**knowledge_base)
+                    else:
+                        return None
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.get_knowledge_base_by_gitlab_project_id: {e}")
             return None
     
     def get_article_by_id(self, knowledge_base_id: str, article_id: str) -> Optional[Article.BaseModel]:
@@ -121,9 +160,9 @@ class KnowledgeBaseOperations:
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cur:
-                    sql = """INSERT INTO knowledge_base (name, description, author_id)
-                             VALUES (%s, %s, %s) RETURNING id;"""
-                    cur.execute(sql, (knowledge_base.name, knowledge_base.description, knowledge_base.author_id))
+                    sql = """INSERT INTO knowledge_base (name, description, author_id, gitlab_project_id)
+                             VALUES (%s, %s, %s, %s) RETURNING id;"""
+                    cur.execute(sql, (knowledge_base.name, knowledge_base.description, knowledge_base.author_id, knowledge_base.gitlab_project_id))
                     id = cur.fetchone()[0]
                     conn.commit()
                     
