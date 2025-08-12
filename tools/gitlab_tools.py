@@ -404,6 +404,251 @@ class GitLabTools:
             
             return result
 
+    class GitLabGetUserAssignedIssuesTool(BaseTool):
+        name: str = "GitLabGetUserAssignedIssuesTool"
+        description: str = """
+            A tool to get issues assigned to a specific user by username.
+            Use this tool to find work assigned to a particular GitLab user (including AI agents).
+            Optionally filter by project ID to get issues from a specific project only.
+            Returns a list of issues assigned to the specified username.
+        """.strip()
+        return_direct: bool = False
+        
+        class GitLabGetUserAssignedIssuesToolInputModel(BaseModel):
+            username: str = Field(description="GitLab username to get assigned issues for")
+            state: str = Field(default="opened", description="Issue state filter (opened, closed, all)")
+            project_id: Optional[str] = Field(default=None, description="Optional project ID to filter issues from specific project")
+
+            @field_validator("username")
+            @classmethod
+            def validate_username(cls, v):
+                if not v or not v.strip():
+                    raise ValueError("GitLabGetUserAssignedIssuesTool error: username parameter is required")
+                return v.strip()
+
+            @field_validator("state")
+            @classmethod
+            def validate_state(cls, v):
+                if v not in ["opened", "closed", "all"]:
+                    raise ValueError("GitLabGetUserAssignedIssuesTool error: state must be 'opened', 'closed', or 'all'")
+                return v
+            
+        args_schema: Optional[ArgsSchema] = GitLabGetUserAssignedIssuesToolInputModel
+     
+        def _run(self, username: str, state: str = "opened", project_id: Optional[str] = None) -> str:
+            issues = gitlab_operations.get_user_assigned_issues(username, state, project_id)
+            if not issues:
+                project_filter = f" in project {project_id}" if project_id else ""
+                return f"No {state} issues found assigned to user '{username}'{project_filter}."
+            
+            # Format the output nicely
+            project_filter = f" in project {project_id}" if project_id else ""
+            result = f"Issues assigned to '{username}' ({state}){project_filter}:\n\n"
+            
+            for issue in issues:
+                issue_id = issue.get('id', 'N/A')
+                iid = issue.get('iid', 'N/A')
+                title = issue.get('title', 'No title')
+                issue_state = issue.get('state', 'unknown')
+                web_url = issue.get('web_url', 'N/A')
+                project_id_val = issue.get('project_id', 'N/A')
+                labels = issue.get('labels', [])
+                milestone = issue.get('milestone', 'No milestone')
+                created_at = issue.get('created_at', 'Unknown')
+                updated_at = issue.get('updated_at', 'Unknown')
+                
+                result += f"🎯 **{title}** (#{iid})\n"
+                result += f"   📁 Project ID: {project_id_val}\n"
+                result += f"   📊 State: {issue_state}\n"
+                result += f"   🔗 URL: {web_url}\n"
+                
+                if labels:
+                    result += f"   🏷️ Labels: {', '.join(labels)}\n"
+                
+                if milestone != 'No milestone':
+                    result += f"   🎯 Milestone: {milestone}\n"
+                
+                result += f"   📅 Created: {created_at}\n"
+                result += f"   ⏰ Updated: {updated_at}\n"
+                result += "   " + "-" * 50 + "\n\n"
+            
+            return result
+
+    class GitLabCreateKBWorkItemsTool(BaseTool):
+        name: str = "GitLabCreateKBWorkItemsTool"
+        description: str = """
+            A tool for the Supervisor to create comprehensive work items when a new Knowledge Base is established.
+            This orchestrates the complete KB development workflow by creating structured issues for all agents.
+            Use this immediately after a new KB is created to establish proper agent coordination.
+        """.strip()
+        return_direct: bool = False
+        
+        class GitLabCreateKBWorkItemsToolInputModel(BaseModel):
+            kb_name: str = Field(description="Name of the Knowledge Base")
+            kb_id: int = Field(description="ID of the Knowledge Base")
+            kb_description: str = Field(description="Description of the Knowledge Base")
+            gitlab_project_id: int = Field(description="GitLab project ID where issues should be created")
+
+            @field_validator("kb_name")
+            @classmethod
+            def validate_kb_name(cls, v):
+                if not v or not v.strip():
+                    raise ValueError("GitLabCreateKBWorkItemsTool error: kb_name parameter is required")
+                return v.strip()
+
+            @field_validator("kb_id")
+            @classmethod
+            def validate_kb_id(cls, v):
+                if v <= 0:
+                    raise ValueError("GitLabCreateKBWorkItemsTool error: kb_id must be a positive integer")
+                return v
+
+            @field_validator("gitlab_project_id")
+            @classmethod
+            def validate_gitlab_project_id(cls, v):
+                if v <= 0:
+                    raise ValueError("GitLabCreateKBWorkItemsTool error: gitlab_project_id must be a positive integer")
+                return v
+            
+        args_schema: Optional[ArgsSchema] = GitLabCreateKBWorkItemsToolInputModel
+     
+        def _run(self, kb_name: str, kb_id: int, kb_description: str, gitlab_project_id: int) -> str:
+            try:
+                # Import the orchestration configuration
+                import sys
+                import os
+                sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                from config.gitlab_kb_work_orchestration import GitLabKBWorkOrchestrator
+                
+                # Get all work items for this KB
+                work_items = GitLabKBWorkOrchestrator.get_kb_initialization_work_items(
+                    kb_name, kb_id, kb_description, gitlab_project_id
+                )
+                
+                # Create milestones first
+                milestones = GitLabKBWorkOrchestrator.get_milestone_structure()
+                created_milestones = []
+                
+                for milestone in milestones:
+                    try:
+                        milestone_result = gitlab_operations.create_milestone(
+                            gitlab_project_id, 
+                            milestone["title"],
+                            milestone["description"],
+                            milestone.get("due_date")
+                        )
+                        if milestone_result:
+                            created_milestones.append(milestone["title"])
+                    except Exception as e:
+                        print(f"Warning: Could not create milestone {milestone['title']}: {e}")
+                
+                # Create labels
+                labels = GitLabKBWorkOrchestrator.get_label_definitions()
+                created_labels = []
+                
+                for label in labels:
+                    try:
+                        label_result = gitlab_operations.create_label(
+                            gitlab_project_id,
+                            label["name"],
+                            label["color"],
+                            label["description"]
+                        )
+                        if label_result:
+                            created_labels.append(label["name"])
+                    except Exception as e:
+                        print(f"Warning: Could not create label {label['name']}: {e}")
+                
+                # Create work item issues
+                created_issues = []
+                failed_issues = []
+                
+                for work_item in work_items:
+                    try:
+                        issue_result = gitlab_operations.create_issue(
+                            project_id=str(gitlab_project_id),
+                            title=work_item["title"],
+                            description=work_item["description"],
+                            assignee_username=work_item.get("assignee"),
+                            labels=work_item.get("labels", []),
+                            milestone_title=work_item.get("milestone")
+                        )
+                        
+                        if issue_result and issue_result.get('success'):
+                            created_issues.append({
+                                "title": work_item["title"],
+                                "assignee": work_item.get("assignee"),
+                                "type": work_item.get("work_item_type", "unknown").value,
+                                "issue_id": issue_result.get('issue_id')
+                            })
+                        else:
+                            failed_issues.append({
+                                "title": work_item["title"],
+                                "error": issue_result.get('error', 'Unknown error')
+                            })
+                    
+                    except Exception as e:
+                        failed_issues.append({
+                            "title": work_item["title"],
+                            "error": str(e)
+                        })
+                
+                # Format comprehensive result
+                result = f"🎯 **KB Work Orchestration Complete for '{kb_name}'**\n\n"
+                result += f"📋 **Knowledge Base:** {kb_name} (ID: {kb_id})\n"
+                result += f"🔗 **GitLab Project:** {gitlab_project_id}\n\n"
+                
+                # Milestones summary
+                if created_milestones:
+                    result += f"🏁 **Milestones Created:** {len(created_milestones)}\n"
+                    for milestone in created_milestones:
+                        result += f"   ✅ {milestone}\n"
+                    result += "\n"
+                
+                # Labels summary  
+                if created_labels:
+                    result += f"🏷️ **Labels Created:** {len(created_labels)}\n"
+                    for label in created_labels[:5]:  # Show first 5
+                        result += f"   ✅ {label}\n"
+                    if len(created_labels) > 5:
+                        result += f"   ... and {len(created_labels) - 5} more\n"
+                    result += "\n"
+                
+                # Issues summary
+                result += f"📝 **Work Items Created:** {len(created_issues)}\n\n"
+                
+                # Group by agent
+                agent_work = {}
+                for issue in created_issues:
+                    assignee = issue["assignee"] or "unassigned"
+                    if assignee not in agent_work:
+                        agent_work[assignee] = []
+                    agent_work[assignee].append(issue)
+                
+                for agent, issues in agent_work.items():
+                    result += f"🤖 **{agent}:** {len(issues)} work items\n"
+                    for issue in issues:
+                        result += f"   ✅ {issue['title']}\n"
+                    result += "\n"
+                
+                # Failed issues
+                if failed_issues:
+                    result += f"❌ **Failed to Create:** {len(failed_issues)}\n"
+                    for failed in failed_issues:
+                        result += f"   ❌ {failed['title']}: {failed['error']}\n"
+                    result += "\n"
+                
+                result += f"🚀 **Next Steps:**\n"
+                result += f"1. Agents will discover their assigned work automatically\n"
+                result += f"2. ContentPlannerAgent should start with KB Architecture Planning\n"
+                result += f"3. Monitor progress through GitLab project dashboard\n"
+                result += f"4. Review and approve deliverables at each milestone\n"
+                
+                return result
+                
+            except Exception as e:
+                return f"❌ Error creating KB work items: {str(e)}"
+
     class GitLabGetWorkItemsTool(BaseTool):
         name: str = "GitLabGetWorkItemsTool"
         description: str = """
@@ -1066,6 +1311,8 @@ class GitLabTools:
             self.GitLabCreateIssueTool(),
             self.GitLabGetProjectIssuesTool(),
             self.GitLabGetIssueDetailsTool(),
+            self.GitLabGetUserAssignedIssuesTool(),
+            self.GitLabCreateKBWorkItemsTool(),
             self.GitLabGetWorkItemsTool(),
             self.GitLabGetWorkItemDetailsTool(),
             self.GitLabCreateProjectTool(),

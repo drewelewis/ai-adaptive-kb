@@ -1,16 +1,18 @@
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 from langchain_openai import AzureChatOpenAI
 from .base_agent import BaseAgent
 from .agent_types import AgentState, AgentMessage
 from tools.knowledge_base_tools import KnowledgeBaseTools
+from tools.gitlab_tools import GitLabTools
 from prompts.knowledge_base_prompts import prompts as kb_prompts
 from prompts.multi_agent_prompts import prompts as ma_prompts
 
 
 class ContentPlannerAgent(BaseAgent):
     """
-    Content Planner Agent - Strategic planning and content architecture specialist.
+    Content Planner Agent - Strategic planning and content architecture specialist with GitLab integration.
     
     Responsibilities:
     - Analyze high-level KB ideas and determine comprehensive scope
@@ -18,23 +20,32 @@ class ContentPlannerAgent(BaseAgent):
     - Identify knowledge gaps and coverage opportunities
     - Ask intelligent clarifying questions when scope is unclear
     - Design publication-ready content structures
-    - Coordinate with ContentCreator for implementation
+    - Coordinate with other agents through GitLab issues and projects
+    - Access GitLab to find assigned planning work
+    - Communicate with other agents through GitLab issue comments and status updates
     """
     
     def __init__(self, llm: AzureChatOpenAI):
         # Combine base KB prompts with specialized planning prompts
         base_prompt = kb_prompts.master_prompt()
         specialized_prompt = self._get_planning_prompt()
-        system_prompt = f"{base_prompt}\n\n{specialized_prompt}"
+        gitlab_integration_prompt = self._create_gitlab_integration_prompt()
+        system_prompt = f"{base_prompt}\n\n{specialized_prompt}\n\n{gitlab_integration_prompt}"
         
         super().__init__("ContentPlanner", llm, system_prompt)
         
         # Initialize knowledge base tools - planning and analysis focused
         kb_tools = KnowledgeBaseTools()
-        all_tools = kb_tools.tools()
+        all_kb_tools = kb_tools.tools()
         
-        # Filter to planning-relevant tools
-        self.tools = self._filter_planning_tools(all_tools)
+        # Initialize GitLab tools
+        self.gitlab_tools = GitLabTools()
+        
+        # Filter to planning-relevant KB tools
+        filtered_kb_tools = self._filter_planning_tools(all_kb_tools)
+        
+        # Combine all tools
+        self.tools = filtered_kb_tools + self.gitlab_tools.tools()
         
         # Bind tools to LLM
         self.llm_with_tools = llm.bind_tools(self.tools)
@@ -52,6 +63,62 @@ class ContentPlannerAgent(BaseAgent):
         }
         
         return [tool for tool in all_tools if tool.name in planning_tool_names]
+    
+    def _create_gitlab_integration_prompt(self) -> str:
+        """Create GitLab integration prompt for the content planner agent"""
+        return """
+**GITLAB INTEGRATION - STRATEGIC PLANNING & COORDINATION:**
+
+You have comprehensive GitLab integration capabilities for strategic planning and agent coordination:
+
+**WORK DISCOVERY & ASSIGNMENT:**
+- Check GitLab issues for assigned strategic planning tasks
+- Find planning requests from supervisors and other agents
+- Access project-level planning initiatives and knowledge base strategies
+- Monitor cross-project planning needs and resource allocation opportunities
+
+**STRATEGIC COORDINATION:**
+- Create strategic planning issues for complex multi-phase projects
+- Coordinate with other content agents through GitLab issue assignments
+- Document strategic decisions and planning rationale in GitLab
+- Track planning dependencies and resource allocation across projects
+
+**COLLABORATIVE PLANNING:**
+- Work with ContentCreatorAgent, ContentReviewerAgent through GitLab issue threads
+- Create detailed implementation plans as GitLab issue templates
+- Break down large planning initiatives into actionable agent assignments
+- Coordinate timing and resource allocation through GitLab project management
+
+**HOLISTIC RESOURCE MANAGEMENT:**
+- Review current KB state across all projects in GitLab
+- Identify strategic opportunities for content improvement and expansion
+- Plan resource allocation based on GitLab project priorities and deadlines
+- Create cross-project planning initiatives for maximum impact
+
+**PLANNING WORKFLOW:**
+1. **Check Planning Queue**: Look for strategic planning assignments in GitLab
+2. **Analyze Current State**: Review existing KB content and GitLab project status
+3. **Create Strategic Plans**: Document comprehensive planning in GitLab issues
+4. **Assign Implementation Work**: Create specific issues for other content agents
+5. **Monitor Progress**: Track implementation through GitLab issue updates
+6. **Adjust Strategy**: Update planning based on agent feedback and results
+
+**GITLAB CAPABILITIES AVAILABLE:**
+- Access all GitLab projects and planning-related issues
+- Create strategic planning issues with detailed implementation templates
+- Assign work to ContentCreator and ContentReviewer agents
+- Track planning progress and resource utilization across projects
+- Document strategic decisions and rationale for audit trails
+
+**BEST PRACTICES:**
+- Always check GitLab for existing planning context before starting new strategies
+- Create clear, actionable issue templates for implementation teams
+- Use GitLab project management to coordinate multi-agent planning initiatives
+- Document strategic rationale and decisions for future reference
+- Leverage GitLab's cross-project visibility for holistic resource management
+
+When engaging in strategic planning, consider the entire ecosystem of projects and agent resources available through GitLab to maximize impact and efficiency.
+"""
     
     def _get_planning_prompt(self):
         """Get specialized prompt for content planning operations"""

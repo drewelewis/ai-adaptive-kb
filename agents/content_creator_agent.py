@@ -1,16 +1,18 @@
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 from langchain_openai import AzureChatOpenAI
 from .base_agent import BaseAgent
 from .agent_types import AgentState, AgentMessage
 from tools.knowledge_base_tools import KnowledgeBaseTools
+from tools.gitlab_tools import GitLabTools
 from prompts.knowledge_base_prompts import prompts as kb_prompts
 from prompts.multi_agent_prompts import prompts as ma_prompts
 
 
 class ContentCreatorAgent(BaseAgent):
     """
-    Content Creator Agent - Expert content generation and research specialist.
+    Content Creator Agent - Expert content generation and research specialist with GitLab integration.
     
     Responsibilities:
     - Research and write comprehensive, in-depth articles
@@ -18,26 +20,73 @@ class ContentCreatorAgent(BaseAgent):
     - Create content that demonstrates deep understanding
     - Build comprehensive coverage following ContentPlanner strategy
     - Generate cross-references and content relationships
-    - Work autonomously with minimal supervision
+    - Access GitLab to find assigned content creation work
+    - Communicate with other agents through GitLab issue comments and updates
+    - Work autonomously with minimal supervision through GitLab coordination
     """
     
     def __init__(self, llm: AzureChatOpenAI):
         # Combine base KB prompts with specialized creation prompts
         base_prompt = kb_prompts.master_prompt()
         specialized_prompt = self._get_creation_prompt()
-        system_prompt = f"{base_prompt}\n\n{specialized_prompt}"
+        gitlab_integration_prompt = self._create_gitlab_integration_prompt()
         
-        super().__init__("ContentCreator", llm, system_prompt)
+        super().__init__("ContentCreatorAgent", llm, base_prompt)
+        
+        # Enhanced system prompt with GitLab integration
+        self.system_prompt = f"{base_prompt}\n\n{specialized_prompt}\n\n{gitlab_integration_prompt}\n\n{self._get_agent_identity_prompt()}"
         
         # Initialize knowledge base tools - creation focused
         kb_tools = KnowledgeBaseTools()
-        all_tools = kb_tools.tools()
+        all_kb_tools = kb_tools.tools()
+        
+        # Initialize GitLab tools
+        self.gitlab_tools = GitLabTools()
         
         # Filter to content creation tools
-        self.tools = self._filter_creation_tools(all_tools)
+        filtered_kb_tools = self._filter_creation_tools(all_kb_tools)
+        
+        # Combine all tools
+        self.tools = filtered_kb_tools + self.gitlab_tools.tools()
         
         # Bind tools to LLM
         self.llm_with_tools = llm.bind_tools(self.tools)
+    
+    def _get_agent_identity_prompt(self) -> str:
+        """Create agent identity prompt with GitLab awareness"""
+        gitlab_info = self.gitlab_info
+        
+        prompt = f"""
+**AGENT IDENTITY & GITLAB INTEGRATION:**
+
+You are the **{self.name}** with the following GitLab identity:
+- **GitLab Username:** {gitlab_info.get('gitlab_username', 'Not configured')}
+- **Agent Class:** {gitlab_info.get('agent_class', 'Unknown')}
+- **GitLab Integration:** {'✅ Enabled' if self.has_gitlab_credentials else '❌ Not configured'}
+
+**YOUR GITLAB WORKFLOW:**
+1. **Check Assigned Work:** Use GitLabGetUserAssignedIssuesTool with username '{gitlab_info.get('gitlab_username', '')}' to find your assigned issues
+2. **Review Requirements:** Get detailed issue information using GitLabGetIssueDetailsTool for each assigned issue
+3. **Execute Work:** Complete content creation tasks as specified in GitLab issue descriptions
+4. **Update Progress:** Add comments to issues to report progress and completion
+
+**CORE RESPONSIBILITIES:**
+"""
+        
+        for responsibility in gitlab_info.get('responsibilities', []):
+            prompt += f"- {responsibility}\n"
+        
+        prompt += f"""
+**AUTONOMOUS WORKFLOW:**
+- You work independently by checking your GitLab assignments
+- Focus on issues assigned to '{gitlab_info.get('gitlab_username', 'your username')}'
+- Collaborate with other agents through GitLab issue comments
+- Report completion status through GitLab issue updates
+
+Always start by checking for assigned work using your GitLab tools before taking any content creation actions.
+"""
+        
+        return prompt
     
     def _filter_creation_tools(self, all_tools):
         """Filter tools to include content creation operations"""
@@ -51,6 +100,62 @@ class ContentCreatorAgent(BaseAgent):
         }
         
         return [tool for tool in all_tools if tool.name in creation_tool_names]
+    
+    def _create_gitlab_integration_prompt(self) -> str:
+        """Create GitLab integration prompt for the content creator agent"""
+        return """
+**GITLAB INTEGRATION - CONTENT CREATION & COLLABORATION:**
+
+You have comprehensive GitLab integration capabilities for content creation and team collaboration:
+
+**WORK DISCOVERY & EXECUTION:**
+- Check GitLab issues for assigned content creation tasks
+- Find content creation assignments from ContentPlanner and Supervisor
+- Access detailed content specifications and requirements from GitLab issue descriptions
+- Monitor content creation backlogs and priority assignments
+
+**COLLABORATIVE CONTENT DEVELOPMENT:**
+- Communicate with ContentPlanner through GitLab issue comments about content strategy
+- Coordinate with ContentReviewerAgent for iterative content improvement
+- Update GitLab issues with content creation progress and completion status
+- Request clarification or additional requirements through GitLab issue threads
+
+**CONTENT CREATION WORKFLOW:**
+- Follow detailed content plans and specifications from GitLab issue templates
+- Break down large content creation projects into manageable GitLab sub-issues
+- Report content creation progress through GitLab issue status updates
+- Provide content completion notifications with links to created articles
+
+**QUALITY COORDINATION:**
+- Tag ContentReviewerAgent in GitLab issues when content is ready for review
+- Respond to review feedback through GitLab issue comments
+- Implement revision requests tracked through GitLab issue workflows
+- Collaborate on content quality improvements through GitLab iteration cycles
+
+**CONTENT CREATION PROCESS:**
+1. **Check Creation Queue**: Look for assigned content creation work in GitLab
+2. **Review Specifications**: Access detailed content requirements from GitLab issues
+3. **Create Content**: Execute content creation following GitLab-documented plans
+4. **Update Progress**: Report creation status through GitLab issue comments
+5. **Request Review**: Tag appropriate agents for content review when ready
+6. **Implement Revisions**: Address feedback tracked through GitLab workflows
+
+**GITLAB CAPABILITIES AVAILABLE:**
+- Access content creation assignments and detailed specifications
+- Update issue status and progress throughout content creation process
+- Collaborate with other agents through issue comments and mentions
+- Create sub-issues for complex content creation projects
+- Track content creation metrics and completion rates
+
+**BEST PRACTICES:**
+- Always check GitLab for content creation context and requirements before starting
+- Use detailed issue comments to document content creation decisions and rationale
+- Update issue status promptly to keep team informed of progress
+- Tag relevant agents for collaboration and review at appropriate stages
+- Follow GitLab-documented content strategies and quality standards
+
+When creating content, leverage GitLab's collaborative features to ensure alignment with strategic plans and quality expectations.
+"""
     
     def _get_creation_prompt(self):
         """Get specialized prompt for content creation operations"""
@@ -472,3 +577,107 @@ class ContentCreatorAgent(BaseAgent):
             "creation_status": "completed",
             "quality_level": "expert"
         }
+    
+    def check_assigned_gitlab_work(self) -> Dict[str, Any]:
+        """Check GitLab for work assigned to this agent"""
+        if not self.is_gitlab_enabled():
+            self.log("⚠️ GitLab integration not configured - cannot check assigned work")
+            return {"status": "error", "message": "GitLab not configured"}
+        
+        gitlab_username = self.get_gitlab_username()
+        self.log(f"🔍 Checking GitLab for issues assigned to: {gitlab_username}")
+        
+        try:
+            # Use the GitLab tool to get assigned issues
+            user_issues_tool = next(
+                (tool for tool in self.tools if tool.name == "GitLabGetUserAssignedIssuesTool"), 
+                None
+            )
+            
+            if not user_issues_tool:
+                self.log("❌ GitLabGetUserAssignedIssuesTool not available")
+                return {"status": "error", "message": "GitLab user issues tool not available"}
+            
+            # Get assigned issues
+            issues_result = user_issues_tool.run({"username": gitlab_username, "state": "opened"})
+            
+            if "No" in issues_result and "issues found" in issues_result:
+                self.log(f"ℹ️ No open issues assigned to {gitlab_username}")
+                return {"status": "no_work", "message": "No assigned issues found", "issues": []}
+            
+            self.log(f"📋 Found assigned work for {gitlab_username}")
+            return {
+                "status": "work_found", 
+                "message": f"Found assigned work for {gitlab_username}",
+                "issues_summary": issues_result
+            }
+            
+        except Exception as e:
+            self.log(f"❌ Error checking GitLab assignments: {str(e)}")
+            return {"status": "error", "message": f"Error checking assignments: {str(e)}"}
+    
+    def process_gitlab_assignment(self, issue_id: str, project_id: str) -> Dict[str, Any]:
+        """Process a specific GitLab issue assignment"""
+        if not self.is_gitlab_enabled():
+            return {"status": "error", "message": "GitLab not configured"}
+        
+        self.log(f"📋 Processing GitLab assignment: Issue #{issue_id} in project {project_id}")
+        
+        try:
+            # First, establish the GitLab project context and find associated KB
+            project_context = self.get_gitlab_project_for_current_work(project_id)
+            
+            if not project_context.get('success'):
+                self.log(f"⚠️ {project_context.get('message', 'Unknown project context error')}")
+                # Can still proceed with issue details, but without KB context
+                kb_context_established = False
+            else:
+                self.log(f"✅ KB context established: {project_context.get('knowledge_base_name')}")
+                kb_context_established = True
+            
+            # Get detailed issue information
+            issue_details_tool = next(
+                (tool for tool in self.tools if tool.name == "GitLabGetIssueDetailsTool"), 
+                None
+            )
+            
+            if not issue_details_tool:
+                return {"status": "error", "message": "GitLab issue details tool not available"}
+            
+            # Get issue details
+            issue_details = issue_details_tool.run({
+                "project_id": project_id, 
+                "issue_iid": issue_id
+            })
+            
+            self.log(f"📄 Retrieved issue details for #{issue_id}")
+            
+            # Process the assignment based on issue content
+            result = {
+                "status": "processed",
+                "message": f"Processed assignment #{issue_id}",
+                "issue_details": issue_details,
+                "gitlab_project_id": project_id,
+                "kb_context_established": kb_context_established
+            }
+            
+            # Add KB context information if available
+            if kb_context_established:
+                result.update({
+                    "knowledge_base_id": project_context.get('knowledge_base_id'),
+                    "knowledge_base_name": project_context.get('knowledge_base_name'),
+                    "work_context": f"Working on GitLab project {project_id} for KB '{project_context.get('knowledge_base_name')}'"
+                })
+                
+                self.log(f"🎯 Ready to work on KB '{project_context.get('knowledge_base_name')}' via GitLab issue #{issue_id}")
+            else:
+                result.update({
+                    "work_context": f"Working on GitLab project {project_id} (no associated KB found)",
+                    "note": "Consider creating a knowledge base for this project or linking an existing one"
+                })
+            
+            return result
+            
+        except Exception as e:
+            self.log(f"❌ Error processing GitLab assignment: {str(e)}")
+            return {"status": "error", "message": f"Error processing assignment: {str(e)}"}

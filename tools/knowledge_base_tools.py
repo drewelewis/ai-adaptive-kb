@@ -77,12 +77,88 @@ class KnowledgeBaseTools():
                     "error": f"Knowledge base with ID {knowledge_base_id} not found"
                 }
             
-            return {
+            # Prepare context information including GitLab project
+            context_info = {
                 "success": True,
                 "knowledge_base_id": knowledge_base_id,
                 "knowledge_base_name": kb.name,
+                "knowledge_base_description": kb.description,
+                "gitlab_project_id": kb.gitlab_project_id,
                 "message": f"Knowledge base context set to: {kb.name} (ID: {knowledge_base_id})"
             }
+            
+            # Add GitLab project information if available
+            if kb.gitlab_project_id:
+                context_info["gitlab_project_context"] = {
+                    "project_id": kb.gitlab_project_id,
+                    "message": f"GitLab project context: Project ID {kb.gitlab_project_id}",
+                    "workflow_note": f"Agents should check for issues in GitLab project {kb.gitlab_project_id} for work related to this knowledge base."
+                }
+                context_info["message"] += f" | GitLab Project: {kb.gitlab_project_id}"
+            else:
+                context_info["gitlab_project_context"] = {
+                    "project_id": None,
+                    "message": "No GitLab project associated with this knowledge base",
+                    "workflow_note": "Consider creating a GitLab project for this knowledge base to enable agent collaboration."
+                }
+            
+            return context_info
+
+    class KnowledgeBaseSetContextByGitLabProject(BaseTool):
+        name: str = "KnowledgeBaseSetContextByGitLabProject"
+        description: str = """
+            useful for when you need to set the knowledge base context based on a GitLab project ID.
+            This allows agents to establish KB context when they know the GitLab project they're working in.
+            Perfect for agents discovering work in GitLab and needing to set the corresponding KB context.
+        """.strip()
+        return_direct: bool = False
+
+        class KnowledgeBaseSetContextByGitLabProjectInputModel(BaseModel):
+            gitlab_project_id: str = Field(description="GitLab project ID to find associated knowledge base")
+
+            @field_validator("gitlab_project_id")
+            def validate_gitlab_project_id(cls, gitlab_project_id):
+                if not gitlab_project_id:
+                    raise ValueError("KnowledgeBaseSetContextByGitLabProject error: gitlab_project_id parameter is empty")
+                return gitlab_project_id
+                
+        args_schema: Optional[ArgsSchema] = KnowledgeBaseSetContextByGitLabProjectInputModel
+    
+        def _run(self, gitlab_project_id: str) -> Dict[str, Any]:
+            try:
+                # Convert to int since DB expects integer
+                project_id_int = int(gitlab_project_id)
+            except ValueError:
+                return {
+                    "success": False,
+                    "error": f"Invalid GitLab project ID: {gitlab_project_id}. Must be a valid integer."
+                }
+            
+            # Find knowledge base by GitLab project ID
+            kb = kb_Operations.get_knowledge_base_by_gitlab_project_id(project_id_int)
+            if not kb:
+                return {
+                    "success": False,
+                    "error": f"No knowledge base found for GitLab project ID {gitlab_project_id}",
+                    "suggestion": "Consider creating a knowledge base for this GitLab project or linking an existing one."
+                }
+            
+            # Prepare context information
+            context_info = {
+                "success": True,
+                "knowledge_base_id": str(kb.id),
+                "knowledge_base_name": kb.name,
+                "knowledge_base_description": kb.description,
+                "gitlab_project_id": kb.gitlab_project_id,
+                "message": f"Knowledge base context set via GitLab project: {kb.name} (KB ID: {kb.id}, GitLab Project: {gitlab_project_id})",
+                "gitlab_project_context": {
+                    "project_id": kb.gitlab_project_id,
+                    "message": f"Working in GitLab project {gitlab_project_id} for knowledge base '{kb.name}'",
+                    "workflow_note": f"Agents should focus on GitLab project {gitlab_project_id} issues for this knowledge base."
+                }
+            }
+            
+            return context_info
 
     class KnowledgeBaseSetArticleContext(BaseTool):
         name: str = "KnowledgeBaseSetArticleContext"
@@ -884,6 +960,7 @@ class KnowledgeBaseTools():
             # Knowledge Base tools
             self.KnowledgeBaseGetKnowledgeBases(), 
             self.KnowledgeBaseSetContext(),
+            self.KnowledgeBaseSetContextByGitLabProject(),
             self.KnowledgeBaseSetArticleContext(),
             self.KnowledgeBaseInsertKnowledgeBase(), 
             self.KnowledgeBaseCreateGitLabProject(),

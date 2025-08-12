@@ -1,16 +1,18 @@
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 from langchain_openai import AzureChatOpenAI
 from .base_agent import BaseAgent
 from .agent_types import AgentState, AgentMessage
 from tools.knowledge_base_tools import KnowledgeBaseTools
+from tools.gitlab_tools import GitLabTools
 from prompts.knowledge_base_prompts import prompts as kb_prompts
 from prompts.multi_agent_prompts import prompts as ma_prompts
 
 
 class ContentRetrievalAgent(BaseAgent):
     """
-    Content Retrieval Agent - Specialized agent for read-only knowledge base operations.
+    Content Retrieval Agent - Specialized agent for read-only knowledge base operations with GitLab integration.
     Optimized for fast content retrieval, search, and analysis operations.
     
     Responsibilities:
@@ -19,22 +21,32 @@ class ContentRetrievalAgent(BaseAgent):
     - Content gap analysis
     - Hierarchy navigation
     - Read-only operations only
+    - Access GitLab to find assigned retrieval and analysis work
+    - Communicate analysis results through GitLab issue updates
+    - Support other agents with content research through GitLab coordination
     """
     
     def __init__(self, llm: AzureChatOpenAI):
         # Combine base KB prompts with specialized retrieval prompts
         base_prompt = kb_prompts.master_prompt()
         specialized_prompt = self._get_retrieval_prompt()
-        system_prompt = f"{base_prompt}\n\n{specialized_prompt}"
+        gitlab_integration_prompt = self._create_gitlab_integration_prompt()
+        system_prompt = f"{base_prompt}\n\n{specialized_prompt}\n\n{gitlab_integration_prompt}"
         
         super().__init__("ContentRetrieval", llm, system_prompt)
         
         # Initialize knowledge base tools - only read operations
         kb_tools = KnowledgeBaseTools()
-        all_tools = kb_tools.tools()
+        all_kb_tools = kb_tools.tools()
+        
+        # Initialize GitLab tools
+        self.gitlab_tools = GitLabTools()
         
         # Filter to only read-only tools
-        self.tools = self._filter_read_only_tools(all_tools)
+        filtered_kb_tools = self._filter_read_only_tools(all_kb_tools)
+        
+        # Combine all tools
+        self.tools = filtered_kb_tools + self.gitlab_tools.tools()
         
         # Bind tools to LLM
         self.llm_with_tools = llm.bind_tools(self.tools)
@@ -51,6 +63,62 @@ class ContentRetrievalAgent(BaseAgent):
         }
         
         return [tool for tool in all_tools if tool.name in read_only_tool_names]
+    
+    def _create_gitlab_integration_prompt(self) -> str:
+        """Create GitLab integration prompt for the content retrieval agent"""
+        return """
+**GITLAB INTEGRATION - CONTENT RESEARCH & ANALYSIS SUPPORT:**
+
+You have comprehensive GitLab integration capabilities for content research and analysis support:
+
+**RESEARCH WORK DISCOVERY:**
+- Check GitLab issues for assigned content research and analysis tasks
+- Find research requests from ContentPlanner, ContentCreator, and ContentReviewer agents
+- Access detailed research requirements and scope from GitLab issue descriptions
+- Monitor research backlogs and support requests across projects
+
+**COLLABORATIVE CONTENT RESEARCH:**
+- Provide detailed content analysis and gap identification through GitLab issue comments
+- Support ContentPlanner with comprehensive domain research for strategic planning
+- Assist ContentCreator with content research and reference materials
+- Help ContentReviewer with completeness validation and gap analysis
+
+**ANALYSIS AND REPORTING:**
+- Document comprehensive content analysis results in GitLab issue comments
+- Create detailed content gap reports as GitLab issue attachments or descriptions
+- Provide structured research findings to support other agents' work
+- Track research completion and share findings through GitLab workflows
+
+**CROSS-PROJECT INTELLIGENCE:**
+- Analyze content patterns and trends across multiple GitLab projects
+- Identify opportunities for content reuse and cross-referencing
+- Provide competitive analysis and benchmark research through GitLab reporting
+- Support strategic content decisions with data-driven GitLab documentation
+
+**RESEARCH WORKFLOW:**
+1. **Check Research Queue**: Look for assigned research and analysis work in GitLab
+2. **Access Requirements**: Review detailed research scope from GitLab issue descriptions
+3. **Execute Analysis**: Perform comprehensive content research and gap analysis
+4. **Document Findings**: Provide detailed research results through GitLab comments
+5. **Support Collaboration**: Assist other agents with research-based decision making
+6. **Track Completion**: Update GitLab issue status when research is complete
+
+**GITLAB CAPABILITIES AVAILABLE:**
+- Access research assignments and detailed scope requirements
+- Provide comprehensive analysis reports through issue documentation
+- Support other agents with research findings and content intelligence
+- Track research metrics and completion rates across projects
+- Create research knowledge base for team reference and reuse
+
+**BEST PRACTICES:**
+- Always check GitLab for research context and requirements before starting analysis
+- Provide structured, actionable research findings through detailed GitLab comments
+- Use GitLab to coordinate research support for other agents
+- Document research methodologies and sources for future reference
+- Maintain comprehensive research audit trails through GitLab documentation
+
+When conducting content research, leverage GitLab's collaborative features to provide maximum value and support to the content creation and planning team.
+"""
     
     def _get_retrieval_prompt(self):
         """Get specialized prompt for content retrieval operations"""

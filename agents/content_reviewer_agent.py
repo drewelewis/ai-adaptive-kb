@@ -1,16 +1,18 @@
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 from langchain_openai import AzureChatOpenAI
 from .base_agent import BaseAgent
 from .agent_types import AgentState, AgentMessage
 from tools.knowledge_base_tools import KnowledgeBaseTools
+from tools.gitlab_tools import GitLabTools
 from prompts.knowledge_base_prompts import prompts as kb_prompts
 from prompts.multi_agent_prompts import prompts as ma_prompts
 
 
 class ContentReviewerAgent(BaseAgent):
     """
-    Content Reviewer Agent - Quality assurance and optimization specialist.
+    Content Reviewer Agent - Quality assurance and optimization specialist with GitLab integration.
     
     Responsibilities:
     - Review content for expert-level quality and accuracy
@@ -18,23 +20,32 @@ class ContentReviewerAgent(BaseAgent):
     - Optimize content organization and structure
     - Validate publication readiness
     - Coordinate revision cycles when needed
-    - Deliver publication-ready knowledge bases
+    - Access GitLab to find assigned review work
+    - Communicate with other agents through GitLab issue comments and feedback
+    - Deliver publication-ready knowledge bases through GitLab-coordinated workflows
     """
     
     def __init__(self, llm: AzureChatOpenAI):
         # Combine base KB prompts with specialized review prompts
         base_prompt = kb_prompts.master_prompt()
         specialized_prompt = self._get_review_prompt()
-        system_prompt = f"{base_prompt}\n\n{specialized_prompt}"
+        gitlab_integration_prompt = self._create_gitlab_integration_prompt()
+        system_prompt = f"{base_prompt}\n\n{specialized_prompt}\n\n{gitlab_integration_prompt}"
         
         super().__init__("ContentReviewer", llm, system_prompt)
         
         # Initialize knowledge base tools - review and optimization focused
         kb_tools = KnowledgeBaseTools()
-        all_tools = kb_tools.tools()
+        all_kb_tools = kb_tools.tools()
+        
+        # Initialize GitLab tools
+        self.gitlab_tools = GitLabTools()
         
         # Filter to review and optimization tools
-        self.tools = self._filter_review_tools(all_tools)
+        filtered_kb_tools = self._filter_review_tools(all_kb_tools)
+        
+        # Combine all tools
+        self.tools = filtered_kb_tools + self.gitlab_tools.tools()
         
         # Bind tools to LLM
         self.llm_with_tools = llm.bind_tools(self.tools)
@@ -52,6 +63,68 @@ class ContentReviewerAgent(BaseAgent):
         }
         
         return [tool for tool in all_tools if tool.name in review_tool_names]
+    
+    def _create_gitlab_integration_prompt(self) -> str:
+        """Create GitLab integration prompt for the content reviewer agent"""
+        return """
+**GITLAB INTEGRATION - QUALITY ASSURANCE & REVIEW COORDINATION:**
+
+You have comprehensive GitLab integration capabilities for quality assurance and review coordination:
+
+**REVIEW WORK DISCOVERY:**
+- Check GitLab issues for assigned content review tasks
+- Find review requests from ContentCreator and ContentPlanner agents
+- Access detailed review criteria and quality standards from GitLab issue descriptions
+- Monitor review backlogs and priority assignments across projects
+
+**COLLABORATIVE QUALITY ASSURANCE:**
+- Provide detailed review feedback through GitLab issue comments
+- Coordinate with ContentCreator for content revision cycles
+- Communicate with ContentPlanner about structural optimization needs
+- Track quality metrics and improvement trends through GitLab reporting
+
+**REVIEW WORKFLOW COORDINATION:**
+- Update GitLab issues with review progress and quality assessments
+- Create detailed revision requests as GitLab sub-issues when needed
+- Document quality improvements and optimization recommendations
+- Track review completion and approval status through GitLab workflows
+
+**ITERATIVE IMPROVEMENT PROCESS:**
+- Manage revision cycles through GitLab issue state transitions
+- Coordinate multi-round reviews for complex content projects
+- Document quality standards and best practices in GitLab project wikis
+- Create improvement tracking issues for long-term quality enhancement
+
+**PUBLICATION READINESS VALIDATION:**
+- Final quality validation documented through GitLab approval processes
+- Create publication-ready status updates for completed knowledge bases
+- Coordinate with Supervisor for final publication approval workflows
+- Maintain quality audit trails through comprehensive GitLab documentation
+
+**REVIEW PROCESS:**
+1. **Check Review Queue**: Look for assigned review work in GitLab issues
+2. **Access Content**: Review content based on detailed GitLab specifications
+3. **Quality Assessment**: Document comprehensive quality evaluation in GitLab
+4. **Provide Feedback**: Create detailed revision requests through GitLab workflows
+5. **Track Improvements**: Monitor revision implementation through GitLab updates
+6. **Approve Completion**: Mark content as publication-ready when quality standards met
+
+**GITLAB CAPABILITIES AVAILABLE:**
+- Access review assignments with detailed quality criteria
+- Create comprehensive review reports and feedback through issue comments
+- Coordinate revision workflows with content creation agents
+- Track quality metrics and improvement trends across projects
+- Document best practices and quality standards for team reference
+
+**BEST PRACTICES:**
+- Always check GitLab for review context and quality standards before starting
+- Provide detailed, actionable feedback through structured GitLab comments
+- Use GitLab workflows to coordinate iterative improvement cycles
+- Document quality decisions and rationale for future reference
+- Maintain comprehensive audit trails of all quality assurance activities
+
+When reviewing content, leverage GitLab's collaborative features to ensure consistent quality standards and effective coordination with the content creation team.
+"""
     
     def _get_review_prompt(self):
         """Get specialized prompt for content review operations"""

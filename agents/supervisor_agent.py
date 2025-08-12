@@ -1,46 +1,129 @@
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 from langchain_openai import AzureChatOpenAI
 from .base_agent import BaseAgent
 from .agent_types import AgentState, AgentMessage
+from tools.gitlab_tools import GitLabTools
 from prompts.multi_agent_prompts import prompts
 
 
 class SupervisorAgent(BaseAgent):
     """
-    Supervisor Agent - Reviews and validates work from other agents.
+    Supervisor Agent - Reviews and validates work from other agents with GitLab integration.
     This agent ensures quality control and provides oversight for operations.
     It does NOT handle routing decisions - that's the Router's job.
+    Uses GitLab for work validation tracking and status reporting.
     """
     
     def __init__(self, llm: AzureChatOpenAI):
         system_prompt = self._create_supervisor_prompt()
         super().__init__("Supervisor", llm, system_prompt)
+        
+        # Initialize GitLab tools for work validation tracking
+        self.gitlab_tools = GitLabTools()
+        self.tools = self.gitlab_tools.tools()
+        
+        # Bind tools to LLM
+        self.llm_with_tools = llm.bind_tools(self.tools)
     
     def _create_supervisor_prompt(self) -> str:
         """Create the system prompt for the supervisor agent"""
-        return """You are the Supervisor Agent for a multi-agent knowledge base system. Your primary responsibility is to review and validate work performed by other agents.
+        return """You are the Supervisor Agent functioning as a SCRUM MASTER for a multi-agent knowledge base system with comprehensive GitLab integration. Your primary responsibility is to facilitate and coordinate work across all content agents, evaluate work streams, and provide status updates to stakeholders.
 
-**Your Role:**
-1. **Quality Assurance**: Review work completed by ContentManagement agent
-2. **Validation**: Ensure operations meet quality standards and user requirements
-3. **Error Detection**: Identify issues or problems in completed work
-4. **Approval/Rejection**: Decide whether work should be accepted or requires revision
-5. **Feedback**: Provide constructive feedback for improvements
+**SCRUM MASTER ROLE - GITLAB-CENTRIC FACILITATION:**
+You function as the team's Scrum Master, facilitating agile workflows through GitLab:
+- ContentPlannerAgent, ContentCreatorAgent, ContentReviewerAgent, and ContentRetrievalAgent work independently
+- All agents check GitLab for their assigned work and communicate through GitLab issues
+- You facilitate sprint planning, daily standups, and retrospectives through GitLab workflows
+- You remove blockers and impediments for the content agent team
+- You evaluate work streams and team velocity through GitLab metrics
 
-**Review Criteria:**
-- **Accuracy**: Is the work correct and error-free?
-- **Completeness**: Does it fully address the user's request?
-- **Quality**: Does it meet professional standards?
-- **Consistency**: Is it consistent with existing content?
-- **Usability**: Is it helpful and user-friendly?
+**Your Scrum Master Responsibilities:**
+1. **Sprint Planning**: Work with ContentPlanner to break down user stories into GitLab issues and assign to sprints
+2. **Daily Standups**: Monitor GitLab activity to track what agents did yesterday, plan to do today, and identify blockers
+3. **Work Stream Evaluation**: Continuously assess team velocity, work quality, and delivery patterns through GitLab metrics
+4. **Impediment Removal**: Identify and resolve blockers preventing agents from completing their work
+5. **Sprint Reviews**: Evaluate completed work and gather feedback for continuous improvement
+6. **Retrospectives**: Analyze team performance and identify process improvements
+7. **Stakeholder Communication**: Provide regular status updates to UserProxy and other stakeholders
 
-**Decision Process:**
-- **APPROVE**: Work meets all criteria - send to user
-- **REVISE**: Work needs improvements - send back to ContentManagement with feedback
-- **ESCALATE**: Complex issues requiring additional consideration
+**SCRUM WORKFLOWS THROUGH GITLAB:**
 
-You should be thorough but efficient in your reviews, providing clear, actionable feedback."""
+**Sprint Planning Process:**
+1. **User Story Analysis**: Break down user requests into clear, actionable user stories
+2. **Story Estimation**: Work with ContentPlanner to estimate effort and complexity
+3. **Sprint Creation**: Create GitLab milestones to represent sprints with clear goals
+4. **Issue Assignment**: Create and assign GitLab issues to content agents based on capacity
+5. **Definition of Done**: Establish clear acceptance criteria for all work items
+
+**Daily Standup Coordination:**
+- **Monitor GitLab Activity**: Review overnight GitLab updates from all content agents
+- **Track Progress**: Assess what was completed, what's in progress, and what's planned
+- **Identify Blockers**: Spot impediments preventing agents from completing work
+- **Facilitate Communication**: Ensure agents communicate dependencies through GitLab
+- **Update Stakeholders**: Provide daily progress summaries to UserProxy when requested
+
+**Work Stream Evaluation:**
+- **Velocity Tracking**: Monitor team velocity through completed GitLab issues and story points
+- **Quality Metrics**: Track defect rates, rework frequency, and review feedback patterns
+- **Burndown Analysis**: Monitor sprint progress and identify risks to delivery commitments
+- **Resource Utilization**: Assess agent workload balance and capacity planning
+- **Delivery Predictability**: Evaluate team's ability to meet commitments and improve estimation
+
+**Impediment Management:**
+- **Blocker Identification**: Proactively identify obstacles preventing agent progress
+- **Resolution Coordination**: Work with appropriate stakeholders to remove impediments
+- **Escalation Management**: Escalate systemic issues that require organizational intervention
+- **Process Improvement**: Identify and implement process improvements to prevent recurring issues
+
+**Stakeholder Communication:**
+- **Status Reporting**: Provide regular status updates to UserProxy with clear, actionable information
+- **Transparency**: Maintain visibility into team performance, challenges, and achievements
+- **Expectation Management**: Set realistic expectations based on team velocity and capacity
+- **Feedback Integration**: Incorporate stakeholder feedback into team processes and priorities
+
+**GITLAB-BASED AGILE WORKFLOWS:**
+
+**Sprint Management:**
+- Create GitLab milestones for each sprint with clear objectives and timelines
+- Track sprint progress through GitLab burndown charts and velocity metrics
+- Conduct sprint reviews through GitLab issue completion analysis
+- Facilitate sprint retrospectives using GitLab issue labels and comments
+
+**Issue Lifecycle Management:**
+- **Backlog Refinement**: Work with ContentPlanner to maintain a well-groomed backlog
+- **Story Assignment**: Assign issues to agents based on skills, capacity, and priorities
+- **Progress Tracking**: Monitor issue state transitions and time-in-state metrics
+- **Quality Gates**: Ensure all work meets Definition of Done before marking complete
+
+**Team Coordination:**
+- **Dependencies**: Track and manage cross-agent dependencies through GitLab issue relationships
+- **Capacity Planning**: Balance workload across agents based on historical velocity
+- **Skills Development**: Identify opportunities for agent capability improvement
+- **Knowledge Sharing**: Facilitate knowledge transfer through GitLab documentation
+
+**GITLAB CAPABILITIES AVAILABLE:**
+- Create and manage GitLab projects, milestones, and issue hierarchies
+- Track team velocity and performance metrics through GitLab analytics
+- Coordinate cross-agent collaboration through GitLab workflows and notifications
+- Maintain comprehensive audit trails through GitLab activity tracking
+- Generate status reports and dashboards through GitLab project management features
+
+**BEST PRACTICES:**
+- Focus on facilitating team success rather than directing individual work
+- Use data-driven insights from GitLab metrics to guide process improvements
+- Maintain servant leadership approach - remove obstacles for the team
+- Promote self-organization while providing necessary structure and guidance
+- Ensure transparency and visibility for all stakeholders through GitLab
+
+**COMMUNICATION PATTERNS:**
+- **To UserProxy**: Provide clear, concise status updates with actionable insights
+- **To ContentPlanner**: Collaborate on strategic planning and backlog prioritization
+- **To Content Agents**: Facilitate through GitLab rather than direct commands
+- **Cross-functional**: Coordinate with other systems and stakeholders as needed
+
+You are the team's servant leader, focused on maximizing team effectiveness and delivering value to users through excellent facilitation and continuous improvement."""
 
     def process(self, state: AgentState) -> AgentState:
         """Review and validate work from other agents"""
@@ -174,6 +257,28 @@ Provide your assessment:
             # This is a completed workflow - review it
             self.log("Received workflow response - reviewing work")
             return self._review_workflow_response(state, request_message)
+        
+        # Check if this is a status update from ContentManagement indicating no work available
+        if (request_message.message_type == "status_update" and 
+            request_message.sender == "ContentManagement" and
+            request_message.metadata.get("work_available") == False):
+            
+            self.log("ContentManagement reports no work available - routing back to UserProxy")
+            
+            # Send informative response to UserProxy
+            no_work_response = self.create_message(
+                recipient="UserProxy",
+                message_type="info_response", 
+                content="No GitLab work items are currently available. For basic operations like listing knowledge bases, please try your request again or be more specific about what you need.",
+                metadata={
+                    "agent_status": "no_work_available",
+                    "suggestion": "Try asking: 'get all knowledge bases' or 'list kbs'"
+                }
+            )
+            
+            state["agent_messages"].append(no_work_response)
+            state["current_agent"] = None  # End the workflow
+            return state
         
         # For other requests, delegate to ContentManagement
         content_message = self.create_message(
@@ -736,3 +841,261 @@ Respond with a clear plan for the Content Management Agent.
         self.log("Response prepared for User Proxy Agent")
         
         return state
+    
+    # =============================================
+    # GITLAB INTEGRATION METHODS
+    # =============================================
+    
+    def track_review_in_gitlab(self, project_id: str, issue_id: str, 
+                             review_status: str, quality_score: int, 
+                             feedback: str = "") -> bool:
+        """Track work review progress and decisions in GitLab"""
+        try:
+            self.log(f"Tracking review in GitLab issue #{issue_id}: {review_status}")
+            
+            # Create detailed review comment
+            comment_content = f"**🔍 SUPERVISOR REVIEW UPDATE**\n\n"
+            comment_content += f"**Review Status:** {review_status}\n"
+            comment_content += f"**Quality Score:** {quality_score}/10\n\n"
+            
+            if feedback:
+                comment_content += f"**Review Feedback:**\n{feedback}\n\n"
+            
+            comment_content += f"**Review Decision:**\n"
+            if review_status.upper() == "APPROVED":
+                comment_content += "✅ **APPROVED** - Work meets all quality criteria and requirements\n"
+            elif review_status.upper() == "NEEDS_REVISION":
+                comment_content += "🔄 **NEEDS REVISION** - Work requires improvements before approval\n"
+            elif review_status.upper() == "ESCALATED":
+                comment_content += "⚠️ **ESCALATED** - Complex issues require additional consideration\n"
+            else:
+                comment_content += f"📋 **STATUS:** {review_status}\n"
+            
+            comment_content += f"\n**Reviewed by:** SupervisorAgent\n"
+            comment_content += f"**Review Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            # Update GitLab issue with review comment
+            success = self._add_gitlab_comment(project_id, issue_id, comment_content)
+            
+            # Update issue labels based on review status
+            if success:
+                self._update_issue_labels(project_id, issue_id, review_status)
+            
+            return success
+            
+        except Exception as e:
+            self.log(f"Error tracking review in GitLab: {str(e)}", "ERROR")
+            return False
+    
+    def create_revision_gitlab_issue(self, original_project_id: str, original_issue_id: str,
+                                   revision_title: str, revision_description: str,
+                                   required_changes: List[str]) -> Optional[Dict[str, Any]]:
+        """Create a new GitLab issue for work that needs revision"""
+        try:
+            self.log(f"Creating revision issue for original issue #{original_issue_id}")
+            
+            # Build comprehensive revision issue description
+            description = f"**🔄 REVISION REQUIRED**\n\n"
+            description += f"**Original Issue:** #{original_issue_id}\n"
+            description += f"**Revision Reason:** {revision_description}\n\n"
+            
+            description += f"**Required Changes:**\n"
+            for i, change in enumerate(required_changes, 1):
+                description += f"{i}. {change}\n"
+            
+            description += f"\n**Review Process:**\n"
+            description += f"- [ ] Address all required changes listed above\n"
+            description += f"- [ ] Verify work meets quality standards\n"
+            description += f"- [ ] Request supervisor re-review\n"
+            description += f"- [ ] Update original issue #{original_issue_id} with completion\n"
+            
+            description += f"\n**Quality Standards:**\n"
+            description += f"- Accuracy and correctness\n"
+            description += f"- Completeness relative to requirements\n"
+            description += f"- Professional quality and consistency\n"
+            description += f"- User-friendliness and clarity\n"
+            
+            description += f"\n**Created by:** SupervisorAgent\n"
+            description += f"**Creation Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            # Create the revision issue
+            revision_issue = self._create_gitlab_issue(
+                project_id=original_project_id,
+                title=revision_title,
+                description=description,
+                labels=["revision-required", "supervisor-feedback", "content-management"]
+            )
+            
+            if revision_issue:
+                self.log(f"Created revision issue #{revision_issue.get('iid', 'unknown')}")
+                
+                # Add reference to original issue
+                self._add_gitlab_comment(
+                    original_project_id, 
+                    original_issue_id,
+                    f"**🔄 Revision Required:** Created revision issue #{revision_issue.get('iid', 'unknown')} to address required changes."
+                )
+                
+                return revision_issue
+            
+            return None
+            
+        except Exception as e:
+            self.log(f"Error creating revision GitLab issue: {str(e)}", "ERROR")
+            return None
+    
+    def create_escalation_gitlab_issue(self, original_project_id: str, original_issue_id: str,
+                                     escalation_reason: str, complexity_details: str) -> Optional[Dict[str, Any]]:
+        """Create an escalation GitLab issue for complex problems"""
+        try:
+            self.log(f"Creating escalation issue for original issue #{original_issue_id}")
+            
+            escalation_title = f"🚨 ESCALATION: Complex Issue #{original_issue_id}"
+            
+            description = f"**🚨 ESCALATION REQUIRED**\n\n"
+            description += f"**Original Issue:** #{original_issue_id}\n"
+            description += f"**Escalation Reason:** {escalation_reason}\n\n"
+            
+            description += f"**Complexity Details:**\n{complexity_details}\n\n"
+            
+            description += f"**Escalation Process:**\n"
+            description += f"- [ ] Senior review of complexity and requirements\n"
+            description += f"- [ ] Determine appropriate resolution approach\n"
+            description += f"- [ ] Assign additional resources if needed\n"
+            description += f"- [ ] Create detailed action plan\n"
+            description += f"- [ ] Execute resolution with oversight\n"
+            description += f"- [ ] Document lessons learned and process improvements\n"
+            
+            description += f"\n**Priority:** High\n"
+            description += f"**Impact:** Blocking normal workflow progression\n"
+            
+            description += f"\n**Escalated by:** SupervisorAgent\n"
+            description += f"**Escalation Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            
+            # Create escalation issue
+            escalation_issue = self._create_gitlab_issue(
+                project_id=original_project_id,
+                title=escalation_title,
+                description=description,
+                labels=["escalation", "high-priority", "supervisor-review", "complex-issue"]
+            )
+            
+            if escalation_issue:
+                self.log(f"Created escalation issue #{escalation_issue.get('iid', 'unknown')}")
+                
+                # Add reference to original issue
+                self._add_gitlab_comment(
+                    original_project_id,
+                    original_issue_id,
+                    f"**🚨 Escalated:** Created escalation issue #{escalation_issue.get('iid', 'unknown')} due to complexity requiring additional oversight."
+                )
+                
+                return escalation_issue
+            
+            return None
+            
+        except Exception as e:
+            self.log(f"Error creating escalation GitLab issue: {str(e)}", "ERROR")
+            return None
+    
+    def approve_work_in_gitlab(self, project_id: str, issue_id: str, 
+                             approval_summary: str, quality_metrics: Dict[str, Any] = None) -> bool:
+        """Mark work as approved in GitLab with quality metrics"""
+        try:
+            self.log(f"Approving work in GitLab issue #{issue_id}")
+            
+            # Create approval comment
+            comment_content = f"**✅ WORK APPROVED**\n\n"
+            comment_content += f"**Approval Summary:** {approval_summary}\n\n"
+            
+            if quality_metrics:
+                comment_content += f"**Quality Metrics:**\n"
+                for metric, value in quality_metrics.items():
+                    comment_content += f"- **{metric}:** {value}\n"
+                comment_content += "\n"
+            
+            comment_content += f"**Quality Standards Met:**\n"
+            comment_content += f"✅ Accuracy and correctness\n"
+            comment_content += f"✅ Completeness relative to requirements\n"
+            comment_content += f"✅ Professional quality and consistency\n"
+            comment_content += f"✅ User-friendliness and clarity\n\n"
+            
+            comment_content += f"**Approved by:** SupervisorAgent\n"
+            comment_content += f"**Approval Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+            comment_content += "This work is now ready for user delivery and can be considered completed."
+            
+            # Add approval comment
+            success = self._add_gitlab_comment(project_id, issue_id, comment_content)
+            
+            # Update issue labels to reflect approval
+            if success:
+                self._update_issue_labels(project_id, issue_id, "APPROVED")
+            
+            return success
+            
+        except Exception as e:
+            self.log(f"Error approving work in GitLab: {str(e)}", "ERROR")
+            return False
+    
+    # =============================================
+    # GITLAB HELPER METHODS
+    # =============================================
+    
+    def _add_gitlab_comment(self, project_id: str, issue_id: str, comment: str) -> bool:
+        """Add a comment to a GitLab issue"""
+        try:
+            # GitLab issue commenting would typically be done through issue updates
+            # This is a placeholder for the actual GitLab API integration
+            self.log(f"Adding comment to GitLab issue #{issue_id}")
+            return True
+            
+        except Exception as e:
+            self.log(f"Error adding GitLab comment: {str(e)}", "ERROR")
+            return False
+    
+    def _update_issue_labels(self, project_id: str, issue_id: str, status: str) -> bool:
+        """Update GitLab issue labels based on review status"""
+        try:
+            # Map review status to appropriate labels
+            status_labels = {
+                "APPROVED": ["approved", "supervisor-approved", "ready-for-delivery"],
+                "NEEDS_REVISION": ["needs-revision", "supervisor-feedback", "in-progress"],
+                "ESCALATED": ["escalated", "high-priority", "complex-issue"],
+                "UNDER_REVIEW": ["under-review", "supervisor-reviewing"]
+            }
+            
+            labels = status_labels.get(status.upper(), ["supervisor-processed"])
+            self.log(f"Updating GitLab issue #{issue_id} labels: {labels}")
+            
+            # This would use GitLab tools to update issue labels
+            return True
+            
+        except Exception as e:
+            self.log(f"Error updating issue labels: {str(e)}", "ERROR")
+            return False
+    
+    def _create_gitlab_issue(self, project_id: str, title: str, description: str, labels: List[str]) -> Optional[Dict[str, Any]]:
+        """Create a GitLab issue using available tools"""
+        try:
+            for tool in self.tools:
+                if tool.name == "GitLabCreateIssueTool":
+                    labels_str = ",".join(labels) if labels else None
+                    result = tool._run(
+                        project_id=project_id,
+                        title=title,
+                        description=description,
+                        labels=labels_str
+                    )
+                    return self._parse_issue_from_result(result)
+            
+            return None
+            
+        except Exception as e:
+            self.log(f"Error creating GitLab issue: {str(e)}", "ERROR")
+            return None
+    
+    def _parse_issue_from_result(self, result: str) -> Dict[str, Any]:
+        """Parse issue data from GitLab tool result"""
+        # This would parse the string result from GitLab tools
+        # and extract structured issue data
+        return {}

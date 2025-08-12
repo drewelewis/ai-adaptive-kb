@@ -174,6 +174,60 @@ class GitLabOperations:
             print(f"An error occurred with GitLabOperations.get_project_issues: {e}")
             return []
     
+    def get_user_assigned_issues(self, username: str, state: str = "opened", project_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Get a list of issues assigned to a specific user (by username)."""
+        try:
+            # First find the user by username
+            users = self.gl.users.list(username=username)
+            if not users:
+                print(f"User with username '{username}' not found")
+                return []
+            
+            user = users[0]
+            user_id = user.id
+            
+            # Get issues assigned to this user
+            if project_id:
+                # Get issues from specific project
+                project = self.gl.projects.get(project_id)
+                issues = project.issues.list(assignee_id=user_id, state=state, all=True)
+            else:
+                # Get issues from all accessible projects
+                issues = self.gl.issues.list(assignee_id=user_id, state=state, all=True)
+            
+            # Convert to dict format
+            result = []
+            for issue in issues:
+                issue_dict = {
+                    'id': issue.id,
+                    'iid': issue.iid,
+                    'title': issue.title,
+                    'description': issue.description,
+                    'state': issue.state,
+                    'web_url': issue.web_url,
+                    'created_at': issue.created_at,
+                    'updated_at': issue.updated_at,
+                    'project_id': issue.project_id,
+                    'author': {'name': issue.author.get('name', 'Unknown')} if hasattr(issue, 'author') and issue.author else {'name': 'Unknown'},
+                    'assignee': {'name': username, 'id': user_id}
+                }
+                
+                # Add labels if available
+                if hasattr(issue, 'labels'):
+                    issue_dict['labels'] = issue.labels
+                
+                # Add milestone if available
+                if hasattr(issue, 'milestone') and issue.milestone:
+                    issue_dict['milestone'] = issue.milestone.get('title', 'Unknown')
+                
+                result.append(issue_dict)
+            
+            return result
+                
+        except Exception as e:
+            print(f"An error occurred with GitLabOperations.get_user_assigned_issues: {e}")
+            return []
+    
     def get_issue_details(self, project_id: str, issue_iid: str) -> Dict[str, Any]:
         """Get detailed information about a specific issue, including tasks."""
         try:
