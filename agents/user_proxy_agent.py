@@ -8,7 +8,13 @@ from prompts.multi_agent_prompts import prompts
 
 class UserProxyAgent(BaseAgent):
     """
-    User Proxy Agent - Facilitates collaborative knowledge base design and creation.
+    User Proxy Agent - **ContentManagement is now analyzing:**
+- Optimal content organization strategies
+- Taxonomic structure recommendations
+- Content categorization approaches
+- Strategic content planning roadmap
+
+You'll see the strategic recommendations shortly, and we can refine them together before moving to technical validation.ates collaborative knowledge base design and creation.
     
     PRIMARY RESPONSIBILITIES:
     - Collaborate with users to design and define knowledge bases
@@ -45,20 +51,71 @@ class UserProxyAgent(BaseAgent):
         
         # Safety check for infinite loops
         recursions = state.get("recursions", 0)
-        if recursions > 12:  # Increased limit for collaborative workflows
+        if recursions > 15:  # Increased limit for multi-agent workflows
             self.log(f"Maximum recursions ({recursions}) reached, stopping workflow")
+            
+            # Reset the session state to break the loop
             state["current_agent"] = None
-            error_message = AIMessage(content="I apologize, but our design session has become too complex. Let's start fresh with a clearer focus on your knowledge base goals.")
+            state["recursions"] = 0
+            state["agent_messages"] = []  # Clear agent message queue
+            state["kb_design_session"] = {"active": False}  # Reset design session
+            
+            # Create a clear error message and instructions for starting fresh
+            error_message = AIMessage(content="""🔄 **Session Reset**
+
+The system detected a processing loop and has been reset for your safety.
+
+**To continue:**
+- Type your request again (e.g., "create a kb about cooking")
+- Use simple, clear language
+- I'll help you step by step
+
+**Available commands:**
+- `/reset` - Clear all session data
+- `/session` - Check current status
+- Type any KB-related request to start fresh
+
+What would you like to help you with?""")
+            
             state["messages"].append(error_message)
             return state
         
+        # Get messages first before using them
         messages = state.get("messages", [])
         if not messages:
             return state
             
         last_message = messages[-1]
         
-        # Check for agent collaboration messages
+        # CRITICAL FIX: Clear workflow_completed flag at start of new processing
+        # This ensures each new user request can be processed fresh
+        if state.get("workflow_completed"):
+            self.log("Clearing previous workflow completion flag for new request")
+            state.pop("workflow_completed", None)
+            state.pop("completed_request", None)
+        
+        # CRITICAL FIX: Reset recursion counter for new user input
+        # Check if this is a new user request (HumanMessage)
+        messages = state.get("messages", [])
+        if messages:
+            last_message = messages[-1]
+            if hasattr(last_message, '__class__') and last_message.__class__.__name__ == 'HumanMessage':
+                # This is a new user input - reset recursion counter
+                self.log("Resetting recursion counter for new user input")
+                state["recursions"] = 0
+        
+        # CRITICAL FIX: Check if this specific request was just completed
+        current_request = str(last_message.content) if last_message else ""
+        completed_request = state.get("completed_request", "")
+        
+        if current_request == completed_request and state.get("workflow_completed"):
+            self.log("Workflow already completed, stopping further processing to prevent loops")
+            # Clear the flags for next interaction
+            state.pop("workflow_completed", None)  
+            state.pop("completed_request", None)
+            return state
+        
+        # Check for agent collaboration messages first
         agent_messages = state.get("agent_messages", [])
         my_messages = [msg for msg in agent_messages if msg.recipient == self.name]
         
@@ -66,8 +123,19 @@ class UserProxyAgent(BaseAgent):
         design_session = state.get("kb_design_session", {})
         session_active = design_session.get("active", False)
         
-        # Process agent collaboration messages first
-        if my_messages:
+        # CRITICAL FIX: If we have a new user message (HumanMessage), prioritize it over old agent messages
+        is_new_user_input = (hasattr(last_message, '__class__') and 
+                            last_message.__class__.__name__ == 'HumanMessage')
+        
+        if is_new_user_input:
+            # Clear old agent messages when we have new user input to prevent interference
+            if my_messages:
+                self.log("Clearing old agent messages to process new user input")
+                state["agent_messages"] = []
+                my_messages = []
+        
+        # Process agent collaboration messages first (only if no new user input)
+        if my_messages and not is_new_user_input:
             latest_message = my_messages[-1]
             
             if latest_message.message_type == "design_collaboration":
@@ -78,27 +146,53 @@ class UserProxyAgent(BaseAgent):
                 return self._handle_design_completion(latest_message, state)
             elif latest_message.message_type == "autonomous_work_ready":
                 return self._handle_autonomous_work_initiation(latest_message, state)
+            elif latest_message.message_type == "gitlab_coordination_response":
+                return self._handle_gitlab_coordination_response(latest_message, state)
+            elif latest_message.message_type == "workflow_complete":
+                return self._handle_workflow_completion(latest_message, state)
+            elif latest_message.message_type == "workflow_error":
+                return self._handle_workflow_error(latest_message, state)
             
-        # Check if user is initiating KB design/creation
-        if (hasattr(last_message, '__class__') and 
-            last_message.__class__.__name__ == 'HumanMessage'):
-            
+        # Process user input if we have new user message
+        if is_new_user_input:
             user_content = last_message.content.lower()
             
-            # Detect KB design/creation intents
-            kb_design_keywords = [
-                "create kb", "new knowledge base", "design kb", "build knowledge base",
-                "create knowledge base", "new kb", "design knowledge base", "plan kb",
-                "knowledge base about", "kb for", "help me create", "help me design"
+            # Check if we're waiting for user confirmation on pending KB creation
+            if state.get("pending_kb_creation"):
+                return self._handle_kb_confirmation(last_message, state)
+            
+            # Check if user is providing KB specification details (like from the confirmation output)
+            kb_spec_patterns = [
+                "📚 kb name:", "📝 description:", "🎯 purpose:", "👥 target audience:", 
+                "📋 scope:", "🏗️ structure:", "kb name:", "description:", "purpose:",
+                "target audience:", "scope:", "structure:"
             ]
             
-            is_kb_design_request = any(keyword in user_content for keyword in kb_design_keywords)
+            is_kb_specification = any(pattern in user_content for pattern in kb_spec_patterns)
             
-            if is_kb_design_request or session_active:
-                return self._handle_kb_design_workflow(last_message, state)
-            else:
-                # Handle other user requests through existing workflow
-                return self._handle_general_user_request(last_message, state)
+            if is_kb_specification:
+                return self._handle_kb_specification_input(last_message, state)
+            
+            # PURE LLM APPROACH: Let LLM handle all intent detection
+            # No pattern matching - send everything to Supervisor for LLM processing
+            self.log("Routing request to Supervisor for LLM-driven processing")
+            
+            # Always set user intent to llm_driven for pure LLM approach
+            state["user_intent"] = "llm_driven"
+            
+            supervisor_message = self.create_message(
+                recipient="Supervisor",
+                message_type="request", 
+                content=user_content,
+                metadata={
+                    "requires_response": True,
+                    "llm_driven": True
+                }
+            )
+            
+            state["agent_messages"].append(supervisor_message)
+            state["current_agent"] = "Supervisor"
+            return state
         
         return state
     
@@ -121,15 +215,15 @@ class UserProxyAgent(BaseAgent):
             return self._continue_design_session(user_content, design_session, state)
     
     def _handle_general_user_request(self, user_message: BaseMessage, state: AgentState) -> AgentState:
-        """Handle general user requests through existing workflow (Router)"""
-        self.log("Handling general user request through Router")
+        """Handle general user requests through existing workflow (Supervisor)"""
+        self.log("Handling general user request through Supervisor")
         
         user_message_content = user_message.content if hasattr(user_message, 'content') else str(user_message)
         
-        # Send request to Router for intent classification and routing
-        router_message = self.create_message(
-            recipient="Router",
-            message_type="routing_request",
+        # Send request to Supervisor for coordination and work assignment
+        supervisor_message = self.create_message(
+            recipient="Supervisor",
+            message_type="work_request",
             content=f"User request: {user_message_content}",
             metadata={"original_message": str(user_message)}
         )
@@ -137,12 +231,12 @@ class UserProxyAgent(BaseAgent):
         # Add to agent messages
         if "agent_messages" not in state:
             state["agent_messages"] = []
-        state["agent_messages"].append(router_message)
+        state["agent_messages"].append(supervisor_message)
         
-        # Set router as next agent
-        state["current_agent"] = "Router"
+        # Set supervisor as next agent
+        state["current_agent"] = "Supervisor"
         
-        self.log("Sent user request to Router for classification and routing")
+        self.log("Sent user request to Supervisor for coordination")
         return state
     
     def _start_design_session(self, user_content: str, state: AgentState) -> AgentState:
@@ -222,13 +316,12 @@ Please answer the questions above, and feel free to share any additional thought
         design_elements = self._extract_design_elements(user_content, design_elements)
         design_session["design_elements"] = design_elements
         
-        # Check if we have enough information to move to planning
+        # Check if we have enough information to create the KB directly
         readiness_score = self._assess_design_readiness(design_elements)
         
-        if readiness_score >= 0.7:  # 70% complete
-            # Move to planning phase with ContentPlanner
-            design_session["phase"] = "planning"
-            return self._initiate_planning_collaboration(design_session, state)
+        if readiness_score >= 0.6:  # 60% complete - enough for direct creation
+            # We have enough info - create the KB directly via ContentManagement
+            return self._create_kb_directly(design_session, state)
         else:
             # Continue discovery with follow-up questions
             follow_up_questions = self._generate_follow_up_questions(design_elements, user_content)
@@ -241,7 +334,7 @@ Please answer the questions above, and feel free to share any additional thought
 
 {follow_up_questions}
 
-**Progress:** {int(readiness_score * 100)}% ready for strategic planning phase.
+**Progress:** {int(readiness_score * 100)}% ready for KB creation.
 """
             
             ai_message = AIMessage(content=response_content)
@@ -250,50 +343,470 @@ Please answer the questions above, and feel free to share any additional thought
             
             return state
     
+    def _handle_planning_phase(self, user_content: str, design_session: Dict[str, Any], state: AgentState) -> AgentState:
+        """Handle the planning phase of KB design - user feedback on strategic plans"""
+        self.log("Processing planning phase input")
+        
+        # Check if user is approving, requesting changes, or providing feedback
+        user_lower = user_content.lower()
+        
+        if any(word in user_lower for word in ['ok', 'yes', 'approve', 'good', 'proceed', 'continue', 'looks good']):
+            # User approves - move to validation phase
+            design_session["phase"] = "validation"
+            return self._handle_validation_phase("proceed with validation", design_session, state)
+        elif any(word in user_lower for word in ['change', 'modify', 'different', 'not quite', 'adjust']):
+            # User wants changes - collect feedback and re-collaborate with ContentPlanner
+            design_session["user_feedback"] = user_content
+            return self._initiate_planning_collaboration(design_session, state)
+        else:
+            # Treat as general feedback/questions - acknowledge and ask for direction
+            response_content = f"""📝 **Thank you for your feedback!**
+
+I've noted: "{user_content}"
+
+**Next Steps Options:**
+✅ **Approve** the current plan to move to technical validation
+🔄 **Request changes** to the strategic plan  
+❓ **Ask questions** about specific aspects
+
+How would you like to proceed?"""
+            
+            ai_message = AIMessage(content=response_content)
+            state["messages"].append(ai_message)
+            state["current_agent"] = None
+            
+            return state
+
+    def _handle_validation_phase(self, user_content: str, design_session: Dict[str, Any], state: AgentState) -> AgentState:
+        """Handle the validation phase of KB design"""
+        self.log("Processing validation phase input")
+        
+        # For now, simple validation - in future can add ContentManagement collaboration
+        response_content = """🔧 **Technical Validation Complete!**
+
+Your knowledge base design has been validated and is ready for implementation.
+
+**Implementation Options:**
+🚀 **Autonomous Creation** - Let our agents build the complete KB structure
+📝 **Guided Creation** - Work together to create content step-by-step
+⏸️ **Save Design** - Store the design for later implementation
+
+Which approach would you prefer?"""
+        
+        ai_message = AIMessage(content=response_content)
+        state["messages"].append(ai_message)
+        state["current_agent"] = None
+        design_session["phase"] = "completion"
+        
+        return state
+
+    def _handle_completion_phase(self, user_content: str, design_session: Dict[str, Any], state: AgentState) -> AgentState:
+        """Handle the completion phase of KB design"""
+        self.log("Processing completion phase input")
+        
+        # Handle implementation choice
+        user_lower = user_content.lower()
+        
+        if any(word in user_lower for word in ['autonomous', 'auto', 'build', 'create']):
+            # Initiate autonomous KB creation
+            return self._initiate_autonomous_creation(design_session, state)
+        elif any(word in user_lower for word in ['guided', 'together', 'step']):
+            # Start guided creation process
+            return self._initiate_guided_creation(design_session, state)
+        else:
+            # Save design for later
+            response_content = """💾 **Design Saved Successfully!**
+
+Your knowledge base design has been saved and can be implemented later.
+
+Type '/design' to access saved designs or start a new knowledge base creation anytime!"""
+            
+            ai_message = AIMessage(content=response_content)
+            state["messages"].append(ai_message)
+            state["current_agent"] = None
+            
+            # Clear the design session
+            if "kb_design_session" in state:
+                del state["kb_design_session"]
+            
+            return state
+
     def _initiate_planning_collaboration(self, design_session: Dict[str, Any], state: AgentState) -> AgentState:
         """Initiate collaboration with ContentPlanner for strategic design"""
-        self.log("Initiating planning collaboration with ContentPlanner")
+        self.log("Initiating planning collaboration with ContentManagement")
         
         design_elements = design_session["design_elements"]
         
-        # Create planning request for ContentPlanner
+        # Create planning request for Supervisor to coordinate ContentPlanner through GitLab
         planning_request = self.create_message(
-            recipient="ContentPlanner",
-            message_type="strategic_design_request",
-            content=f"Collaborative KB design planning needed for: {design_elements.get('domain', 'New Knowledge Base')}",
+            recipient="Supervisor",
+            message_type="gitlab_coordination_request",
+            content=f"Please coordinate ContentPlanner work through GitLab for: {design_elements.get('domain', 'New Knowledge Base')}",
             metadata={
                 "design_session": design_session,
                 "design_elements": design_elements,
                 "user_requirements": design_session["user_requirements"],
                 "collaboration_type": "kb_design",
-                "phase": "strategic_planning"
+                "phase": "strategic_planning",
+                "gitlab_coordination": {
+                    "target_agent": "ContentPlanner",
+                    "work_type": "strategic_design",
+                    "requires_gitlab_issue": True
+                }
             }
         )
         
         state["agent_messages"].append(planning_request)
-        state["current_agent"] = "ContentPlanner"
+        state["current_agent"] = "Supervisor"
         
         # Update user about the collaboration
         response_content = f"""🎯 **Moving to Strategic Planning Phase!**
 
-Excellent! I have enough information to begin strategic planning. I'm now collaborating with our ContentPlanner specialist to develop a comprehensive structural design for your knowledge base.
+Excellent! I have enough information to begin strategic planning. I'm now coordinating with our Supervisor to manage ContentPlanner work through GitLab for your knowledge base design.
 
 **Design Summary So Far:**
 {self._summarize_design_elements(design_elements)}
 
-**ContentPlanner is now analyzing:**
-- Optimal content organization strategies
-- Taxonomic structure recommendations  
-- Content categorization approaches
-- Strategic content planning roadmap
+**Supervisor is now coordinating:**
+- GitLab issue creation for ContentPlanner strategic design work
+- Autonomous ContentPlanner analysis of your requirements
+- Strategic content organization and architecture planning
+- Content categorization and taxonomy recommendations
 
-You'll see the strategic recommendations shortly, and we can refine them together before moving to technical validation.
+The ContentPlanner will work autonomously through GitLab to develop strategic recommendations, and you'll see the results once they complete their analysis.
 """
         
         ai_message = AIMessage(content=response_content)
         state["messages"].append(ai_message)
         
         return state
+    
+    def _create_kb_directly(self, design_session: Dict[str, Any], state: AgentState) -> AgentState:
+        """Show confirmation before creating KB when we have enough information"""
+        self.log("Showing KB creation confirmation")
+        
+        design_elements = design_session["design_elements"]
+        
+        # Store the design for confirmation instead of creating immediately
+        state["pending_kb_creation"] = {
+            "type": "collaborative_design",
+            "design_session": design_session,
+            "design_elements": design_elements
+        }
+        
+        # End the design session but keep it for later reference
+        design_session["active"] = False
+        design_session["phase"] = "awaiting_confirmation"
+        state["kb_design_session"] = design_session
+        
+        # Ask for confirmation before creating
+        response_content = f"""🔍 **Confirm Knowledge Base Creation**
+
+Perfect! I have enough information to create your knowledge base. Before proceeding, please confirm these details:
+
+**📚 Knowledge Base:** "{design_elements.get('name', design_elements.get('domain', 'New Knowledge Base'))}"
+
+**📋 Design Summary:**
+{self._summarize_design_elements(design_elements)}
+
+**🏗️ Structure:** 3-level hierarchy (categories → subcategories → articles) - perfect for ebook development
+
+**Does this look correct?**
+- Type **"yes"** or **"confirm"** to create the knowledge base
+- Type **"no"** or **"change"** to modify the details
+- Provide specific changes if needed
+
+Would you like me to proceed with creating this knowledge base?
+"""
+        
+        ai_message = AIMessage(content=response_content)
+        state["messages"].append(ai_message)
+        state["current_agent"] = None  # Wait for user confirmation
+        
+        return state
+    
+    def _handle_direct_kb_creation(self, user_message: BaseMessage, state: AgentState) -> AgentState:
+        """Handle direct KB creation without collaborative workflow"""
+        self.log("Handling direct KB creation request")
+        
+        user_content = user_message.content
+        
+        # Extract KB details from the direct command
+        # Look for patterns like "create kb: 'Title' - description"
+        import re
+        
+        # Pattern 1: create kb: "title" - description
+        title_match = re.search(r'create kb[:\s]*["\']([^"\']+)["\'][\s\-]*(.+)', user_content, re.IGNORECASE)
+        if not title_match:
+            # Pattern 2: create knowledge base: "title" - description  
+            title_match = re.search(r'create knowledge base[:\s]*["\']([^"\']+)["\'][\s\-]*(.+)', user_content, re.IGNORECASE)
+        
+        if title_match:
+            kb_name = title_match.group(1).strip()
+            kb_description = title_match.group(2).strip()
+        else:
+            # Fallback: use the whole content as title/description
+            kb_name = "New Knowledge Base"
+            kb_description = user_content
+        
+        # Create simple design elements
+        design_elements = {
+            "name": kb_name,
+            "domain": kb_name,
+            "purpose": "Knowledge base creation",
+            "target_audience": "General users", 
+            "scope": kb_description,
+            "structure_preferences": "Hierarchical organization"
+        }
+        
+        # Store the design for confirmation instead of creating immediately
+        state["pending_kb_creation"] = {
+            "type": "direct_creation",
+            "design_elements": design_elements,
+            "original_request": user_content
+        }
+        
+        # Ask for confirmation before creating
+        response_content = f"""� **Confirm Knowledge Base Creation**
+
+Before I create your knowledge base, please confirm these details:
+
+**📚 KB Name:** {kb_name}
+**📝 Description:** {kb_description}
+**🎯 Purpose:** Knowledge base creation
+**👥 Target Audience:** General users
+**📋 Scope:** {kb_description}
+**🏗️ Structure:** Hierarchical organization (3 levels: categories → subcategories → articles)
+
+**Does this look correct?**
+- Type **"yes"** or **"confirm"** to create the knowledge base
+- Type **"no"** or **"change"** to modify the details
+- Provide specific changes if needed
+
+Would you like me to proceed with creating this knowledge base?
+"""
+        
+        ai_message = AIMessage(content=response_content)
+        state["messages"].append(ai_message)
+        state["current_agent"] = None  # Wait for user confirmation
+        
+        return state
+    
+    def _handle_kb_confirmation(self, user_message: BaseMessage, state: AgentState) -> AgentState:
+        """Handle user confirmation for pending KB creation"""
+        self.log("Handling KB creation confirmation")
+        
+        user_content = user_message.content.lower().strip()
+        pending_creation = state.get("pending_kb_creation", {})
+        
+        # Check for confirmation
+        confirm_keywords = ["yes", "confirm", "proceed", "ok", "create", "go ahead", "do it"]
+        deny_keywords = ["no", "cancel", "stop", "don't", "change", "modify", "different"]
+        
+        is_confirmed = any(keyword in user_content for keyword in confirm_keywords)
+        is_denied = any(keyword in user_content for keyword in deny_keywords)
+        
+        if is_confirmed:
+            # User confirmed - proceed with KB creation
+            self.log("User confirmed KB creation - proceeding")
+            
+            design_elements = pending_creation.get("design_elements", {})
+            creation_type = pending_creation.get("type", "unknown")
+            
+            # Create KB creation request for ContentManagement
+            kb_creation_request = self.create_message(
+                recipient="ContentManagementAgent",
+                message_type="supervised_work_request",
+                content=f"Create knowledge base with strategic design for: {design_elements.get('domain', design_elements.get('name', 'New Knowledge Base'))}",
+                metadata={
+                    "intent": "create_knowledge_base",
+                    "kb_creation": True,
+                    "design_session": pending_creation.get("design_session", {"design_elements": design_elements}),
+                    "design_elements": design_elements
+                }
+            )
+            
+            state["agent_messages"].append(kb_creation_request)
+            state["current_agent"] = "ContentManagementAgent"
+            
+            # Clear the pending creation
+            del state["pending_kb_creation"]
+            
+            # Update user about the KB creation
+            response_content = f"""✅ **Creating Your Knowledge Base!**
+
+Thank you for confirming! I'm now working with ContentManagement to create:
+
+**📚 Knowledge Base:** "{design_elements.get('name', design_elements.get('domain', 'New Knowledge Base'))}"
+
+**🔧 ContentManagement is now:**
+- Creating the knowledge base in the database
+- Setting up strategic content framework
+- Preparing for your 3-level structure (categories → subcategories → articles)
+- Configuring for ebook development
+
+Your knowledge base will be ready shortly!
+"""
+            
+            ai_message = AIMessage(content=response_content)
+            state["messages"].append(ai_message)
+            
+            return state
+            
+        elif is_denied:
+            # User wants to make changes
+            self.log("User denied KB creation - allowing modifications")
+            
+            # Clear the pending creation and restart the design process
+            del state["pending_kb_creation"]
+            
+            response_content = """🔄 **Let's Modify the Design**
+
+No problem! Let's adjust the knowledge base details. What would you like to change?
+
+You can specify:
+- **Name/Title:** What should the knowledge base be called?
+- **Description:** What topics should it cover?
+- **Target Audience:** Who will use this KB?
+- **Purpose:** What's the main goal (training, reference, ebook, etc.)?
+- **Structure:** Any specific organization preferences?
+
+Please tell me what you'd like to modify, or we can start fresh if you prefer.
+"""
+            
+            ai_message = AIMessage(content=response_content)
+            state["messages"].append(ai_message)
+            state["current_agent"] = None
+            
+            return state
+            
+        else:
+            # User didn't clearly confirm or deny - ask for clarification
+            response_content = """❓ **Please Confirm**
+
+I need a clear confirmation before creating the knowledge base. Please respond with:
+
+- **"Yes"** or **"Confirm"** to create the knowledge base as shown
+- **"No"** or **"Change"** to modify the details
+
+What would you like me to do?
+"""
+            
+            ai_message = AIMessage(content=response_content)
+            state["messages"].append(ai_message)
+            state["current_agent"] = None
+            
+            return state
+    
+    def _handle_kb_specification_input(self, user_message: BaseMessage, state: AgentState) -> AgentState:
+        """Handle user input that contains KB specification details"""
+        self.log("Handling KB specification input")
+        
+        user_content = user_message.content
+        
+        # Initialize or get existing KB specification
+        kb_spec = state.get("kb_specification", {})
+        
+        # Extract details from the user input
+        import re
+        
+        # Pattern matching for different specification fields
+        patterns = {
+            "name": [r"📚 kb name:\s*(.+)", r"kb name:\s*(.+)", r"name:\s*(.+)"],
+            "description": [r"📝 description:\s*(.+)", r"description:\s*(.+)"],
+            "purpose": [r"🎯 purpose:\s*(.+)", r"purpose:\s*(.+)"],
+            "target_audience": [r"👥 target audience:\s*(.+)", r"target audience:\s*(.+)"],
+            "scope": [r"📋 scope:\s*(.+)", r"scope:\s*(.+)"],
+            "structure": [r"🏗️ structure:\s*(.+)", r"structure:\s*(.+)"]
+        }
+        
+        # Try to extract information
+        for field, field_patterns in patterns.items():
+            for pattern in field_patterns:
+                match = re.search(pattern, user_content, re.IGNORECASE)
+                if match:
+                    kb_spec[field] = match.group(1).strip()
+                    self.log(f"Extracted {field}: {kb_spec[field]}")
+                    break
+        
+        # Update state
+        state["kb_specification"] = kb_spec
+        
+        # Check if we have enough information for creation
+        required_fields = ["name", "description", "purpose", "target_audience", "scope"]
+        completed_fields = [field for field in required_fields if kb_spec.get(field)]
+        completion_rate = len(completed_fields) / len(required_fields)
+        
+        if completion_rate >= 0.8:  # 80% complete - create directly
+            self.log(f"KB specification {completion_rate*100}% complete - creating confirmation")
+            
+            # Create design elements from specification
+            design_elements = {
+                "name": kb_spec.get("name", "New Knowledge Base"),
+                "domain": kb_spec.get("name", "New Knowledge Base"),
+                "purpose": kb_spec.get("purpose", "Knowledge base creation"),
+                "target_audience": kb_spec.get("target_audience", "General users"),
+                "scope": kb_spec.get("description", kb_spec.get("scope", "Knowledge base content")),
+                "structure_preferences": kb_spec.get("structure", "Hierarchical organization")
+            }
+            
+            # Store for confirmation
+            state["pending_kb_creation"] = {
+                "type": "specification_based",
+                "design_elements": design_elements,
+                "kb_specification": kb_spec
+            }
+            
+            # Clear the specification now that we're moving to confirmation
+            if "kb_specification" in state:
+                del state["kb_specification"]
+            
+            # Show confirmation
+            response_content = f"""🔍 **Confirm Knowledge Base Creation**
+
+Great! I've collected your KB specifications. Before creating, please confirm these details:
+
+**📚 KB Name:** {design_elements['name']}
+**📝 Description:** {design_elements['scope']}
+**🎯 Purpose:** {design_elements['purpose']}
+**👥 Target Audience:** {design_elements['target_audience']}
+**🏗️ Structure:** {design_elements['structure_preferences']}
+
+**Does this look correct?**
+- Type **"yes"** or **"confirm"** to create the knowledge base
+- Type **"no"** or **"change"** to modify the details
+
+Would you like me to proceed with creating this knowledge base?
+"""
+            
+            ai_message = AIMessage(content=response_content)
+            state["messages"].append(ai_message)
+            state["current_agent"] = None
+            
+            return state
+        else:
+            # Still collecting information - acknowledge and ask for more
+            missing_fields = [field for field in required_fields if not kb_spec.get(field)]
+            
+            response_content = f"""📝 **Collecting KB Specifications** ({len(completed_fields)}/{len(required_fields)} fields)
+
+**Current Information:**
+"""
+            for field in completed_fields:
+                response_content += f"✅ **{field.replace('_', ' ').title()}:** {kb_spec[field]}\n"
+            
+            if missing_fields:
+                response_content += f"\n**Still needed:**\n"
+                for field in missing_fields:
+                    response_content += f"❓ **{field.replace('_', ' ').title()}**\n"
+                
+                response_content += f"\nPlease provide the missing information to continue with KB creation."
+            
+            ai_message = AIMessage(content=response_content)
+            state["messages"].append(ai_message)
+            state["current_agent"] = None
+            
+            return state
     
     # =============================================
     # AGENT COLLABORATION HANDLERS
@@ -435,6 +948,19 @@ You can continue using the system normally while the implementation proceeds in 
         ai_message = AIMessage(content=response_content)
         state["messages"].append(ai_message)
         state["current_agent"] = None
+        
+        return state
+
+    def _handle_gitlab_coordination_response(self, message: AgentMessage, state: AgentState) -> AgentState:
+        """Handle GitLab coordination response from Supervisor"""
+        self.log("Processing GitLab coordination response")
+        
+        # Present the coordination status to the user
+        response_content = message.content
+        
+        ai_message = AIMessage(content=response_content)
+        state["messages"].append(ai_message)
+        state["current_agent"] = None  # Wait for user input
         
         return state
 
@@ -787,5 +1313,123 @@ Example:
         
         state["agent_messages"].append(implementation_request)
         state["current_agent"] = "Supervisor"
+        
+        return state
+
+    def _initiate_autonomous_creation(self, design_session: Dict[str, Any], state: AgentState) -> AgentState:
+        """Initiate autonomous KB creation based on the design"""
+        self.log("Initiating autonomous KB creation")
+        
+        # Create autonomous creation request for Supervisor
+        creation_request = self.create_message(
+            recipient="Supervisor",
+            message_type="autonomous_kb_creation",
+            content="Begin autonomous knowledge base creation based on collaborative design",
+            metadata={
+                "design_session": design_session,
+                "design_elements": design_session.get("design_elements", {}),
+                "strategic_plan": design_session.get("strategic_plan", {}),
+                "implementation_type": "autonomous",
+                "requires_coordination": True
+            }
+        )
+        
+        state["agent_messages"].append(creation_request)
+        state["current_agent"] = "Supervisor"
+        
+        response_content = """🚀 **Autonomous KB Creation Initiated!**
+
+I'm now coordinating with our specialist agents to create your knowledge base:
+
+**Process:**
+1. **ContentPlanner** - Creating detailed content strategy
+2. **ContentCreator** - Generating comprehensive articles  
+3. **ContentReviewer** - Ensuring quality and completeness
+4. **GitLab Integration** - Setting up project management
+
+You'll receive updates as the creation progresses. This may take a few minutes for a comprehensive knowledge base.
+
+**Status:** 🔄 Creation in progress..."""
+        
+        ai_message = AIMessage(content=response_content)
+        state["messages"].append(ai_message)
+        
+        # Clear the design session
+        if "kb_design_session" in state:
+            del state["kb_design_session"]
+        
+        return state
+
+    def _initiate_guided_creation(self, design_session: Dict[str, Any], state: AgentState) -> AgentState:
+        """Initiate guided KB creation process"""
+        self.log("Initiating guided KB creation")
+        
+        response_content = """📝 **Guided KB Creation Starting!**
+
+Let's work together to build your knowledge base step by step.
+
+**Our Collaborative Process:**
+1. **Review & Finalize Structure** - Confirm the content hierarchy
+2. **Create Core Articles** - Work together on key content pieces
+3. **Build Supporting Content** - Add comprehensive coverage
+4. **Review & Polish** - Ensure everything meets your standards
+
+**Next Step:** Let's start by finalizing your knowledge base structure.
+
+Would you like to begin with reviewing the proposed content hierarchy?"""
+        
+        ai_message = AIMessage(content=response_content)
+        state["messages"].append(ai_message)
+        state["current_agent"] = None
+        
+        # Keep design session active for guided process
+        design_session["implementation_mode"] = "guided"
+        state["kb_design_session"] = design_session
+        
+        return state
+
+    def _handle_workflow_completion(self, completion_message: AgentMessage, state: AgentState) -> AgentState:
+        """Handle completed workflow responses from Supervisor"""
+        self.log("Processing workflow completion from Supervisor")
+        
+        # Get the response content from the Supervisor
+        response_content = completion_message.content
+        metadata = completion_message.metadata
+        
+        # Create AI message with the Supervisor's reviewed response
+        ai_message = AIMessage(content=response_content)
+        state["messages"].append(ai_message)
+        
+        # CRITICAL FIX: Clear current agent AND agent messages to stop the loop
+        state["current_agent"] = None
+        state["agent_messages"] = []  # Clear to prevent re-processing
+        
+        # Clear any pending operations
+        state.pop("pending_kb_creation", None)
+        
+        # DON'T set global workflow_completed - let request-specific logic handle it
+        # This allows new user requests to be processed normally
+        
+        self.log("Workflow completed successfully")
+        return state
+    
+    def _handle_workflow_error(self, error_message: AgentMessage, state: AgentState) -> AgentState:
+        """Handle workflow errors from Supervisor"""
+        self.log("Processing workflow error from Supervisor")
+        
+        # Get the error content from the Supervisor
+        error_content = error_message.content
+        
+        # Create AI message with the error information
+        ai_message = AIMessage(content=error_content)
+        state["messages"].append(ai_message)
+        state["current_agent"] = None
+        
+        # Clear any pending operations
+        state.pop("pending_kb_creation", None)
+        
+        self.log("Workflow error handled")
+        return state
+        design_session["guided_step"] = "structure_review"
         
         return state

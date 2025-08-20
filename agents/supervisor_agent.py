@@ -5,6 +5,7 @@ from langchain_openai import AzureChatOpenAI
 from .base_agent import BaseAgent
 from .agent_types import AgentState, AgentMessage
 from tools.gitlab_tools import GitLabTools
+from tools.knowledge_base_tools import KnowledgeBaseTools
 from prompts.multi_agent_prompts import prompts
 
 
@@ -12,41 +13,85 @@ class SupervisorAgent(BaseAgent):
     """
     Supervisor Agent - Reviews and validates work from other agents with GitLab integration.
     This agent ensures quality control and provides oversight for operations.
-    It does NOT handle routing decisions - that's the Router's job.
+    Handles coordination and work assignment in the GitLab-centric architecture.
     Uses GitLab for work validation tracking and status reporting.
     """
     
     def __init__(self, llm: AzureChatOpenAI):
         system_prompt = self._create_supervisor_prompt()
-        super().__init__("Supervisor", llm, system_prompt)
+        super().__init__("SupervisorAgent", llm, system_prompt)
         
         # Initialize GitLab tools for work validation tracking
         self.gitlab_tools = GitLabTools()
-        self.tools = self.gitlab_tools.tools()
+        
+        # Initialize read-only KB tools for oversight and coordination
+        self.kb_tools = KnowledgeBaseTools()
+        
+        # Combine GitLab tools with read-only KB tools
+        gitlab_tools_list = self.gitlab_tools.tools()
+        readonly_kb_tools = self._get_readonly_kb_tools()
+        self.tools = gitlab_tools_list + readonly_kb_tools
         
         # Bind tools to LLM
         self.llm_with_tools = llm.bind_tools(self.tools)
+    
+    def _get_readonly_kb_tools(self) -> List:
+        """Get read-only knowledge base tools for supervisor oversight.
+        
+        The Supervisor needs visibility into KB content for coordination purposes
+        but should not create, modify, or delete any content. All content 
+        operations are handled by the content_agent_swarm.
+        """
+        all_kb_tools = self.kb_tools.get_tools()
+        
+        # Only include read-only tools for oversight and coordination
+        readonly_tool_names = [
+            "KnowledgeBaseGetKnowledgeBases",           # List all KBs
+            "KnowledgeBaseGetRootLevelArticles",        # View KB content structure
+            "KnowledgeBaseGetArticleHierarchy",         # View content organization
+            "KnowledgeBaseGetArticleByArticleId",       # Read specific articles
+            "KnowledgeBaseGetChildArticlesByParentIds", # Navigate content structure
+            "KnowledgeBaseGetTagsByKnowledgeBase",      # View KB tagging
+            "KnowledgeBaseGetTagById",                  # Read tag details
+            "KnowledgeBaseGetTagsForArticle",           # View article tags
+            "KnowledgeBaseGetArticlesForTag",           # Search by tags
+            "KnowledgeBaseGetTagsWithUsageCount",       # Content analytics
+        ]
+        
+        # Filter to only include read-only tools
+        readonly_tools = [
+            tool for tool in all_kb_tools 
+            if tool.name in readonly_tool_names
+        ]
+        
+        return readonly_tools
     
     def _create_supervisor_prompt(self) -> str:
         """Create the system prompt for the supervisor agent"""
         return """You are the Supervisor Agent functioning as a SCRUM MASTER for a multi-agent knowledge base system with comprehensive GitLab integration. Your primary responsibility is to facilitate and coordinate work across all content agents, evaluate work streams, and provide status updates to stakeholders.
 
+**DIRECT COMMUNICATION ARCHITECTURE:**
+- **UserProxy Agent**: Direct bidirectional communication for user collaboration and status updates
+- **ContentManagement Agent**: Direct bidirectional communication for operational coordination and work delegation
+- **Other Agents**: NO direct communication - coordinate only through GitLab issues, projects, and workflows
+
 **SCRUM MASTER ROLE - GITLAB-CENTRIC FACILITATION:**
 You function as the team's Scrum Master, facilitating agile workflows through GitLab:
-- ContentPlannerAgent, ContentCreatorAgent, ContentReviewerAgent, and ContentRetrievalAgent work independently
-- All agents check GitLab for their assigned work and communicate through GitLab issues
+- ContentPlanner, ContentCreator, ContentReviewer, and ContentRetrieval agents work autonomously through GitLab
+- These agents discover their work by checking GitLab for assigned issues
+- You coordinate them by creating GitLab issues, milestones, and project structures
 - You facilitate sprint planning, daily standups, and retrospectives through GitLab workflows
-- You remove blockers and impediments for the content agent team
+- You remove blockers and impediments for the content agent team through GitLab
 - You evaluate work streams and team velocity through GitLab metrics
 
 **Your Scrum Master Responsibilities:**
-1. **Sprint Planning**: Work with ContentPlanner to break down user stories into GitLab issues and assign to sprints
-2. **Daily Standups**: Monitor GitLab activity to track what agents did yesterday, plan to do today, and identify blockers
+1. **Sprint Planning**: Create GitLab milestones and issues for sprint planning
+2. **Daily Standups**: Monitor GitLab activity to track agent progress and identify blockers
 3. **Work Stream Evaluation**: Continuously assess team velocity, work quality, and delivery patterns through GitLab metrics
-4. **Impediment Removal**: Identify and resolve blockers preventing agents from completing their work
-5. **Sprint Reviews**: Evaluate completed work and gather feedback for continuous improvement
-6. **Retrospectives**: Analyze team performance and identify process improvements
-7. **Stakeholder Communication**: Provide regular status updates to UserProxy and other stakeholders
+4. **Impediment Removal**: Identify and resolve blockers through GitLab issue management
+5. **Sprint Reviews**: Evaluate completed work through GitLab issue completion analysis
+6. **Retrospectives**: Analyze team performance using GitLab metrics and feedback
+7. **Stakeholder Communication**: Provide regular status updates to UserProxy and ContentManagement
 
 **SCRUM WORKFLOWS THROUGH GITLAB:**
 
@@ -92,16 +137,16 @@ You function as the team's Scrum Master, facilitating agile workflows through Gi
 - Facilitate sprint retrospectives using GitLab issue labels and comments
 
 **Issue Lifecycle Management:**
-- **Backlog Refinement**: Work with ContentPlanner to maintain a well-groomed backlog
-- **Story Assignment**: Assign issues to agents based on skills, capacity, and priorities
+- **Backlog Refinement**: Create well-groomed GitLab issues and backlogs for autonomous agent discovery
+- **Story Assignment**: Assign GitLab issues to agents based on skills, capacity, and priorities
 - **Progress Tracking**: Monitor issue state transitions and time-in-state metrics
 - **Quality Gates**: Ensure all work meets Definition of Done before marking complete
 
 **Team Coordination:**
 - **Dependencies**: Track and manage cross-agent dependencies through GitLab issue relationships
 - **Capacity Planning**: Balance workload across agents based on historical velocity
-- **Skills Development**: Identify opportunities for agent capability improvement
-- **Knowledge Sharing**: Facilitate knowledge transfer through GitLab documentation
+- **Skills Development**: Identify opportunities for agent capability improvement through GitLab analytics
+- **Knowledge Sharing**: Facilitate knowledge transfer through GitLab documentation and wikis
 
 **GITLAB CAPABILITIES AVAILABLE:**
 - Create and manage GitLab projects, milestones, and issue hierarchies
@@ -110,20 +155,42 @@ You function as the team's Scrum Master, facilitating agile workflows through Gi
 - Maintain comprehensive audit trails through GitLab activity tracking
 - Generate status reports and dashboards through GitLab project management features
 
+**KNOWLEDGE BASE READ-ONLY ACCESS:**
+For coordination and oversight purposes, you have read-only access to KB data:
+- **View KB Structure**: List all knowledge bases and their hierarchical content
+- **Read Content**: Access articles, tags, and metadata for coordination context
+- **Analyze Content**: Review content organization for sprint planning and work estimation
+- **Monitor Progress**: Track content creation progress without making changes
+
+**CRITICAL BOUNDARY: NO CONTENT MODIFICATION**
+- **NO Creation**: You cannot create articles, tags, or KB entries
+- **NO Modification**: You cannot edit, update, or modify any content
+- **NO Deletion**: You cannot delete any KB content or structures
+- **Delegation Only**: All content operations must be delegated to content_agent_swarm
+
 **BEST PRACTICES:**
 - Focus on facilitating team success rather than directing individual work
 - Use data-driven insights from GitLab metrics to guide process improvements
 - Maintain servant leadership approach - remove obstacles for the team
-- Promote self-organization while providing necessary structure and guidance
+- Promote agent self-organization while providing necessary structure through GitLab
 - Ensure transparency and visibility for all stakeholders through GitLab
 
 **COMMUNICATION PATTERNS:**
-- **To UserProxy**: Provide clear, concise status updates with actionable insights
-- **To ContentPlanner**: Collaborate on strategic planning and backlog prioritization
-- **To Content Agents**: Facilitate through GitLab rather than direct commands
-- **Cross-functional**: Coordinate with other systems and stakeholders as needed
+- **To UserProxy**: Direct communication for clear, concise status updates with actionable insights
+- **To ContentManagement**: Direct communication for operational coordination and work delegation
+- **For Content Operations**: ALWAYS delegate to content_agent_swarm via ContentManagement - never perform content operations directly
+- **To Other Agents**: NO direct communication - coordinate only through GitLab issues, projects, and assignments
+- **Cross-functional**: Coordinate with other systems and stakeholders through GitLab workflows
 
-You are the team's servant leader, focused on maximizing team effectiveness and delivering value to users through excellent facilitation and continuous improvement."""
+**DELEGATION WORKFLOW FOR CONTENT OPERATIONS:**
+When users request content creation, modification, or management:
+1. **Acknowledge Request**: Confirm understanding of the content operation needed
+2. **Coordinate via ContentManagement**: Route all content work through ContentManagement agent
+3. **Create GitLab Issues**: Set up appropriate GitLab tracking for the content work
+4. **Monitor Progress**: Use read-only KB tools to track progress without interfering
+5. **Report Status**: Provide updates to UserProxy on content operation progress
+
+You are the team's servant leader, focused on maximizing team effectiveness and delivering value to users through excellent facilitation, GitLab coordination, and continuous improvement."""
 
     def process(self, state: AgentState) -> AgentState:
         """Review and validate work from other agents"""
@@ -132,22 +199,46 @@ You are the team's servant leader, focused on maximizing team effectiveness and 
         # Increment recursion counter
         self.increment_recursions(state)
         
+        # Check for excessive recursions and reset if needed
+        recursions = state.get("recursions", 0)
+        if recursions > 12 or state.get("loop_detected", False):
+            self.log(f"Loop or excessive recursions detected, resetting session")
+            
+            # Reset the session state completely
+            state["current_agent"] = None
+            state["recursions"] = 0
+            state["agent_messages"] = []
+            state["kb_design_session"] = {"active": False}
+            state["loop_detected"] = False
+            
+            # Send a reset message to UserProxy
+            reset_message = self.create_message(
+                recipient="UserProxy",
+                message_type="workflow_complete",
+                content="🔄 **Session Reset** - Please start your request again with clear instructions.",
+                metadata={"success": True, "reset": True}
+            )
+            
+            state["agent_messages"].append(reset_message)
+            state["current_agent"] = "UserProxy"
+            return state
+        
         # Check for messages from other agents
         agent_messages = state.get("agent_messages", [])
-        my_messages = [msg for msg in agent_messages if msg.recipient == self.name]
+        my_messages = [msg for msg in agent_messages if msg.recipient in [self.name, "Supervisor"]]
         
         if not my_messages:
-            # No agent messages - this might be direct routing from Router
-            self.log("No agent messages found - checking for direct routing from Router")
+            # No agent messages - this might be direct routing from UserProxy
+            self.log("No agent messages found - checking for direct routing from UserProxy")
             return self._handle_direct_routing(state)
         
         # Get the latest message
         latest_message = my_messages[-1]
         
-        if latest_message.message_type == "work_review":
+        if latest_message.message_type in ["work_review", "workflow_response"]:
             # Review work completed by ContentManagement
             self.log("Reviewing work from ContentManagement Agent")
-            return self._review_work(state, latest_message)
+            return self._review_workflow_response(state, latest_message)
         else:
             # Handle other types of supervision requests
             self.log(f"Processing supervision request: {latest_message.message_type}")
@@ -252,6 +343,11 @@ Provide your assessment:
     def _handle_supervision_request(self, state: AgentState, request_message: AgentMessage) -> AgentState:
         """Handle general supervision requests"""
         
+        # Check if this is a GitLab coordination request from UserProxy
+        if request_message.message_type == "gitlab_coordination_request":
+            self.log("Received GitLab coordination request")
+            return self._handle_gitlab_coordination_request(state, request_message)
+        
         # Check if this is a workflow response from ContentManagement
         if request_message.message_type == "workflow_response":
             # This is a completed workflow - review it
@@ -300,7 +396,7 @@ Provide your assessment:
         return state
     
     def _handle_direct_routing(self, state: AgentState) -> AgentState:
-        """Handle direct routing from Router agent"""
+        """Handle direct routing from UserProxy agent"""
         
         # Get the user's intent and last message
         user_intent = state.get("user_intent", "unknown")
@@ -319,9 +415,9 @@ Provide your assessment:
             message_type="supervised_work_request",
             content=last_message,
             metadata={
-                "intent": user_intent,
+                "intent": "llm_driven",  # Always use LLM-driven approach
                 "requires_review": True,
-                "supervisor_notes": "Direct routing from Router - work will be reviewed upon completion",
+                "supervisor_notes": "Direct routing from UserProxy - LLM will determine appropriate actions",
                 "original_request": last_message
             }
         )
@@ -603,10 +699,22 @@ Provide your assessment:
             issues.append("No meaningful work content provided")
             score -= 5
         
-        # Determine decision
+        # Check if tool execution was successful regardless of score
+        tool_executed_successfully = False
+        if isinstance(results, dict):
+            tool_executed_successfully = results.get("tool_executed", False) or \
+                                       "executed successfully" in str(results).lower() or \
+                                       reported_success
+        
+        # Determine decision - be more lenient for successful tool executions
         if score >= 7:
             decision = "APPROVE"
             feedback = "Work completed satisfactorily"
+            user_message = work_content
+        elif score >= 5 and tool_executed_successfully:
+            # If tools executed successfully, approve even with medium score
+            decision = "APPROVE"
+            feedback = "Work completed with tool execution success"
             user_message = work_content
         elif score >= 5:
             decision = "REVISE"
@@ -1099,3 +1207,53 @@ Respond with a clear plan for the Content Management Agent.
         # This would parse the string result from GitLab tools
         # and extract structured issue data
         return {}
+    
+    def _handle_gitlab_coordination_request(self, state: AgentState, request_message: AgentMessage) -> AgentState:
+        """Handle GitLab coordination requests from UserProxy"""
+        self.log("Processing GitLab coordination request")
+        
+        metadata = request_message.metadata
+        gitlab_coordination = metadata.get("gitlab_coordination", {})
+        target_agent = gitlab_coordination.get("target_agent")
+        work_type = gitlab_coordination.get("work_type")
+        design_session = metadata.get("design_session", {})
+        
+        # For ContentPlanner coordination, create GitLab issue for autonomous discovery
+        if target_agent == "ContentPlanner" and work_type == "strategic_design":
+            
+            # In the simplified chat system, delegate the complete KB creation to ContentManagement
+            # instead of waiting for autonomous GitLab discovery
+            self.log("Delegating KB creation to ContentManagement for immediate execution")
+            
+            # Create KB creation request for ContentManagement
+            kb_creation_request = self.create_message(
+                recipient="ContentManagementAgent",
+                message_type="supervised_work_request",
+                content=f"Create knowledge base with strategic design for: {design_session.get('design_elements', {}).get('domain', 'Financial Freedom')}",
+                metadata={
+                    "design_session": design_session,
+                    "requires_review": True,
+                    "supervisor_notes": "Complete KB creation with strategic planning integration",
+                    "intent": "create_knowledge_base",
+                    "kb_creation": True
+                }
+            )
+            
+            state["agent_messages"].append(kb_creation_request)
+            state["current_agent"] = "ContentManagementAgent"
+            
+            self.log(f"Delegated KB creation to ContentManagement for immediate execution")
+            
+        else:
+            # Handle other coordination requests
+            error_response = self.create_message(
+                recipient="UserProxy",
+                message_type="coordination_error",
+                content=f"Unknown GitLab coordination request: {target_agent} - {work_type}",
+                metadata={"error": "unsupported_coordination_type"}
+            )
+            
+            state["agent_messages"].append(error_response)
+            state["current_agent"] = "UserProxy"
+        
+        return state

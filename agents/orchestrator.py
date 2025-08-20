@@ -33,7 +33,6 @@ except ImportError:
 from .user_proxy_agent import UserProxyAgent
 from .supervisor_agent import SupervisorAgent
 from .content_management_agent import ContentManagementAgent
-from .router_agent import RouterAgent
 from .agent_types import AgentState
 
 # Import new autonomous content creation agents
@@ -79,7 +78,6 @@ class Orchestrator:
         )
         
         # Initialize agents
-        self.router = RouterAgent(self.llm)
         self.user_proxy = UserProxyAgent(self.llm)
         self.supervisor = SupervisorAgent(self.llm)
         self.content_manager = ContentManagementAgent(self.llm)
@@ -97,7 +95,7 @@ class Orchestrator:
         self.graph = self._build_graph()
         
         print("🤖 Autonomous Content Creation System initialized!")
-        print("Agents loaded: Router, UserProxy, Supervisor, ContentManagement")
+        print("Agents loaded: UserProxy, Supervisor, ContentManagement")
         print("Content Creation: ContentPlanner, ContentCreator, ContentReviewer")
         print("State management: PostgreSQL with ACID transactions")
         
@@ -159,7 +157,6 @@ class Orchestrator:
         
         # Add nodes for each agent including new content creation agents
         workflow.add_node("UserProxy", self._process_user_proxy)
-        workflow.add_node("Router", self._process_router)
         workflow.add_node("Supervisor", self._process_supervisor)
         workflow.add_node("ContentManagement", self._process_content_management)
         workflow.add_node("ContentPlanner", self._process_content_planner)
@@ -174,20 +171,8 @@ class Orchestrator:
             "UserProxy",
             self._route_from_user_proxy,
             {
-                "Router": "Router",
+                "Supervisor": "Supervisor",
                 "UserProxy": "UserProxy", 
-                "END": END
-            }
-        )
-        
-        workflow.add_conditional_edges(
-            "Router",
-            self._route_from_router,
-            {
-                "UserProxy": "UserProxy",
-                "Supervisor": "Supervisor", 
-                "ContentManagement": "ContentManagement",
-                "ContentPlanner": "ContentPlanner",
                 "END": END
             }
         )
@@ -253,38 +238,6 @@ class Orchestrator:
         result_state = self.user_proxy.process(state)
         return result_state
     
-    def _process_router(self, state: AgentState) -> AgentState:
-        """Process Router agent for intent classification and routing"""
-        result_state = self.router.process(state)
-        # Update PostgreSQL state with intent classification results
-        if "user_intent" in result_state:
-            # Convert percentage confidence to decimal (0-100 -> 0.0-1.0)
-            raw_confidence = result_state.get("intent_confidence", 0.0)
-            print(f"🔍 Raw confidence from router: {raw_confidence} (type: {type(raw_confidence)})")
-            
-            confidence = raw_confidence
-            if confidence > 1.0:  # If it's a percentage, convert to decimal
-                confidence = confidence / 100.0
-                print(f"🔄 Converted confidence: {confidence} (type: {type(confidence)})")
-            else:
-                print(f"📌 Using confidence as-is: {confidence} (type: {type(confidence)})")
-            
-            user_intent = result_state["user_intent"]
-            print(f"🔍 Updating session context: user_intent='{user_intent}', intent_confidence={confidence}")
-            
-            try:
-                self.state_manager.update_session_context(
-                    agent="Router",
-                    user_intent=user_intent,
-                    intent_confidence=confidence
-                )
-                print(f"✅ Session context updated successfully")
-            except Exception as e:
-                print(f"❌ Failed to update session context: {e}")
-                # Don't re-raise - let the system continue
-                print("⚠️ Continuing without session context update")
-        return result_state
-    
     def _process_supervisor(self, state: AgentState) -> AgentState:
         """Process Supervisor agent with simplified state management"""
         result_state = self.supervisor.process(state)
@@ -296,7 +249,7 @@ class Orchestrator:
         return result_state
     
     def _route_from_user_proxy(self, state: AgentState) -> str:
-        """Routing from UserProxy - route to Router for intent classification"""
+        """Routing from UserProxy - route to Supervisor for coordination"""
         current_agent = state.get("current_agent")
         recursions = state.get("recursions", 0)
         
@@ -316,10 +269,10 @@ class Orchestrator:
             )
             return "END"
         
-        # Route to Router for intent classification, or handle agent messages
-        if current_agent == "Router":
-            print("➡️ Routing to Router for intent classification")
-            return "Router"
+        # Route to Supervisor for coordination, or handle agent messages
+        if current_agent == "Supervisor":
+            print("➡️ Routing to Supervisor for coordination")
+            return "Supervisor"
         elif current_agent == "UserProxy":
             # Check if there are agent messages to process
             agent_messages = state.get("agent_messages", [])
@@ -333,39 +286,6 @@ class Orchestrator:
                 return "END"
         else:
             print(f"🏁 Ending workflow (current_agent={current_agent})")
-            return "END"
-    
-    def _route_from_router(self, state: AgentState) -> str:
-        """Routing from Router based on intent classification"""
-        current_agent = state.get("current_agent")
-        recursions = state.get("recursions", 0)
-        user_intent = state.get("user_intent", "general_inquiry")
-        
-        print(f"🔀 Router routing: current_agent={current_agent}, intent={user_intent}, recursions={recursions}")
-        
-        if recursions >= 50:
-            print("🛑 Router: Maximum recursions reached")
-            self.state_manager.update_session_context(
-                agent="Router",
-                conversation_state="completed"
-            )
-            return "END"
-        
-        # Route based on the determined target agent from Router
-        if current_agent == "UserProxy":
-            print("➡️ Router routing back to UserProxy for direct response")
-            return "UserProxy"
-        elif current_agent == "Supervisor":
-            print("➡️ Router routing to Supervisor for workflow management")
-            return "Supervisor"
-        elif current_agent == "ContentManagement":
-            print("➡️ Router routing to ContentManagement for KB operations")
-            return "ContentManagement"
-        elif current_agent == "ContentPlanner":
-            print("➡️ Router routing to ContentPlanner for autonomous content creation")
-            return "ContentPlanner"
-        else:
-            print(f"🏁 Router ending workflow (current_agent={current_agent})")
             return "END"
     
     def _route_from_supervisor(self, state: AgentState) -> str:

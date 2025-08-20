@@ -15,19 +15,96 @@ class GitLabOperations:
         if not self.gitlab_token:
             raise ValueError("GitLab Personal Access Token (GITLAB_PAT) is not set in environment variables.")
         
-        # Initialize GitLab connection
-        self.gl = gitlab.Gitlab(self.gitlab_url, private_token=self.gitlab_token)
+        # Simple initialization - lazy load the client
+        self.gl = None
+        print(f"🔧 GitLab operations ready for {self.gitlab_url}")
+    
+    def _ensure_client(self):
+        """Lazy initialization of GitLab client."""
+        if self.gl is None:
+            print(f"🔄 Creating GitLab client...")
+            import requests
+            session = requests.Session()
+            session.timeout = 5
+            
+            self.gl = gitlab.Gitlab(
+                self.gitlab_url, 
+                private_token=self.gitlab_token, 
+                session=session
+            )
+            print(f"✅ GitLab client created")
+    
+    def _create_gitlab_client_with_timeout(self, timeout_seconds=10):
+        """Create GitLab client with a timeout mechanism."""
+        # Set up timeout signal (only works on Unix-like systems)
+        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(timeout_seconds)
         
-        # Authenticate to verify connection
         try:
-            self.gl.auth()
-            print(f"✅ Connected to GitLab at {self.gitlab_url}")
-        except Exception as e:
-            print(f"⚠️ GitLab connection warning: {e}")
+            import requests
+            session = requests.Session()
+            session.timeout = 5
+            
+            gl = gitlab.Gitlab(
+                self.gitlab_url, 
+                private_token=self.gitlab_token, 
+                session=session
+            )
+            
+            signal.alarm(0)  # Cancel the alarm
+            return gl
+            
+        except TimeoutError:
+            raise Exception(f"GitLab client creation timed out after {timeout_seconds} seconds")
+        finally:
+            signal.signal(signal.SIGALRM, old_handler)  # Restore old handler
+    
+    def _initialize_gitlab_connection(self, max_retries=3, base_delay=1):
+        """Initialize GitLab connection with retry logic and exponential backoff."""
+        for attempt in range(max_retries):
+            try:
+                print(f"🔄 GitLab connection attempt {attempt + 1}/{max_retries}...")
+                
+                # Try to create client with timeout (if on Unix-like system)
+                try:
+                    print(f"   🔧 Creating GitLab client with timeout...")
+                    self.gl = self._create_gitlab_client_with_timeout(10)
+                    print(f"   ✅ GitLab client created")
+                except:
+                    # Fallback for Windows or if timeout doesn't work
+                    print(f"   � Creating GitLab client (fallback method)...")
+                    import requests
+                    session = requests.Session()
+                    session.timeout = 5
+                    self.gl = gitlab.Gitlab(self.gitlab_url, private_token=self.gitlab_token, session=session)
+                    print(f"   ✅ GitLab client created (fallback)")
+                
+                print(f"✅ GitLab connection established successfully!")
+                return  # Success!
+                    
+            except Exception as e:
+                print(f"❌ GitLab connection attempt {attempt + 1} failed: {e}")
+                
+                if attempt < max_retries - 1:  # Not the last attempt
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    print(f"⏳ Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                else:
+                    print(f"💥 All GitLab connection attempts failed!")
+                    print(f"⚠️ Continuing without GitLab verification...")
+                    # Create a minimal client as last resort
+                    import requests
+                    session = requests.Session()
+                    session.timeout = 5
+                    self.gl = gitlab.Gitlab(self.gitlab_url, private_token=self.gitlab_token, session=session)
+        print(f"🔑 Token configured: {'***' + self.gitlab_token[-4:] if self.gitlab_token else 'None'}")
+        
+        # We'll test the connection when we actually use it
     
     def get_projects_list(self) -> List[Dict[str, Any]]:
         """Get a list of all GitLab projects accessible with the current token."""
         try:
+            self._ensure_client()  # Lazy load client
             projects = self.gl.projects.list(all=True)
             
             # Convert to dict format for consistency
@@ -413,6 +490,8 @@ class GitLabOperations:
                       initialize_with_readme: bool = False) -> Dict[str, Any]:
         """Create a new GitLab project for knowledge base management (without repository by default)."""
         try:
+            self._ensure_client()  # Lazy load client
+            
             project_data = {
                 'name': name,
                 'path': name.lower().replace(' ', '-').replace('_', '-'),

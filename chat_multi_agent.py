@@ -11,6 +11,7 @@ warnings.filterwarnings('ignore', category=UserWarning, module='pydantic')
 # Import required agents for direct communication
 from agents.user_proxy_agent import UserProxyAgent
 from agents.supervisor_agent import SupervisorAgent
+from agents.content_management_agent import ContentManagementAgent
 from agents.postgresql_state_manager import PostgreSQLStateManager
 from agents.agent_types import AgentState, AgentMessage
 from config.model_config import ModelConfig
@@ -18,7 +19,7 @@ from config.model_config import ModelConfig
 load_dotenv(override=True)
 
 class SimplifiedMultiAgentChat:
-    """Simplified multi-agent chat with direct UserProxy-Supervisor communication."""
+    """Simplified multi-agent chat with direct UserProxy-Supervisor-ContentManagement communication."""
     
     def __init__(self):
         # Generate session ID first
@@ -29,6 +30,7 @@ class SimplifiedMultiAgentChat:
         self.model_config = ModelConfig()
         self.user_proxy = None
         self.supervisor = None
+        self.content_management = None
         self.conversation_history = []
         self.current_state = AgentState()
         
@@ -38,7 +40,7 @@ class SimplifiedMultiAgentChat:
         return str(uuid.uuid4())
         
     def initialize_agents(self) -> None:
-        """Initialize UserProxy and Supervisor agents with direct communication."""
+        """Initialize UserProxy, Supervisor, and ContentManagement agents with direct communication."""
         try:
             print("🔄 Initializing simplified chat system...")
             
@@ -49,6 +51,10 @@ class SimplifiedMultiAgentChat:
             # Initialize Supervisor agent with LLM
             supervisor_llm = self.model_config.get_premium_model()
             self.supervisor = SupervisorAgent(llm=supervisor_llm)
+            
+            # Initialize ContentManagement agent with LLM  
+            content_llm = self.model_config.get_premium_model()
+            self.content_management = ContentManagementAgent(llm=content_llm)
             
             # Initialize agent state with required fields
             self.current_state = {
@@ -99,16 +105,36 @@ class SimplifiedMultiAgentChat:
             try:
                 user_proxy_state = self.user_proxy.process(self.current_state)
                 
-                # Update state and forward to Supervisor
-                print("👑 Supervisor coordinating response...")
-                user_proxy_state["current_agent"] = "Supervisor"
-                supervisor_state = self.supervisor.process(user_proxy_state)
+                # CRITICAL FIX: Check if UserProxy completed the workflow
+                if user_proxy_state.get("workflow_completed"):
+                    print("✅ Workflow completed by UserProxy, stopping processing")
+                    final_state = user_proxy_state
+                else:
+                    # Update state and forward to Supervisor
+                    print("👑 Supervisor coordinating response...")
+                    user_proxy_state["current_agent"] = "Supervisor"
+                    supervisor_state = self.supervisor.process(user_proxy_state)
+                    
+                    # Check if Supervisor delegated to ContentManagement
+                    if supervisor_state.get("current_agent") == "ContentManagement":
+                        print("🔧 ContentManagement executing request...")
+                        supervisor_state["current_agent"] = "ContentManagement"
+                        content_state = self.content_management.process(supervisor_state)
+                        
+                        # ContentManagement should route back to Supervisor for review
+                        if content_state.get("current_agent") == "Supervisor":
+                            print("👑 Supervisor reviewing ContentManagement work...")
+                            final_state = self.supervisor.process(content_state)
+                        else:
+                            final_state = content_state
+                    else:
+                        final_state = supervisor_state
                 
-                # Extract response from state
-                final_response = self._extract_response_from_state(supervisor_state)
+                # Extract response from final state
+                final_response = self._extract_response_from_state(final_state)
                 
                 # Update current state
-                self.current_state = supervisor_state
+                self.current_state = final_state
                 
             except Exception as agent_error:
                 print(f"⚠️ Agent processing error: {agent_error}")
@@ -132,6 +158,15 @@ class SimplifiedMultiAgentChat:
     def _extract_response_from_state(self, state: AgentState) -> str:
         """Extract the response content from agent state."""
         try:
+            # First check for agent messages to UserProxy (workflow completions)
+            agent_messages = state.get("agent_messages", [])
+            user_proxy_messages = [msg for msg in agent_messages if msg.recipient == "UserProxy"]
+            
+            if user_proxy_messages:
+                latest_message = user_proxy_messages[-1]
+                if latest_message.message_type in ["workflow_complete", "workflow_error"]:
+                    return latest_message.content
+            
             # Check for messages in state
             if "messages" in state and state["messages"]:
                 last_message = state["messages"][-1]

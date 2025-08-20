@@ -207,34 +207,46 @@ class KnowledgeBaseTools():
     class KnowledgeBaseInsertKnowledgeBase(BaseTool):
         name: str = "KnowledgeBaseInsertKnowledgeBase"
         description: str = """
-            Create a new Knowledge Base with automatic GitLab project integration.
+            Create a new Knowledge Base with mandatory GitLab project integration.
             This tool will:
             1. Create the knowledge base in the database
-            2. Automatically create a GitLab project for project management
+            2. **REQUIRED**: Create a GitLab project for agent coordination and workflow
             3. Link the KB and GitLab project together
-            4. Set up KB management issues for workflow tracking
+            4. Set up KB management issues for autonomous agent work
             
-            If any step fails, the tool will provide guidance for manual completion.
+            GitLab project creation is CRITICAL for the multi-agent workflow.
+            Without GitLab integration, agents cannot coordinate work properly.
+            
+            If GitLab creation fails, the KB creation should be considered incomplete.
         """.strip()
         return_direct: bool = False
 
         class KnowledgeBaseInsertKnowledgeBaseInputModel(BaseModel):
-            knowledge_base: KnowledgeBase.InsertModel = Field(description="knowledge_base")
+            name: str = Field(description="Name/title of the knowledge base")
+            description: str = Field(description="Description of the knowledge base content and purpose")
+            author_id: int = Field(default=1, description="ID of the author (user) - defaults to 1")
             create_gitlab_project: bool = Field(default=True, description="Whether to automatically create a GitLab project (default: True)")
             gitlab_project_name: Optional[str] = Field(default=None, description="Custom GitLab project name (auto-generated if not provided)")
 
             # Validation method to check parameter input from agent
-            @field_validator("knowledge_base")
-            def validate_query_param(knowledge_base):
-                if not knowledge_base:
-                    raise ValueError("KnowledgeBaseInsertKnowledgeBase error: knowledge_base parameter is empty")
-                else:
-                    return knowledge_base
+            @field_validator("name")
+            def validate_name_param(cls, name):
+                if not name or not name.strip():
+                    raise ValueError("KnowledgeBaseInsertKnowledgeBase error: name parameter is empty")
+                return name.strip()
                 
         args_schema: Optional[ArgsSchema] = KnowledgeBaseInsertKnowledgeBaseInputModel
     
-        def _run(self, knowledge_base: KnowledgeBase.InsertModel, create_gitlab_project: bool = True, gitlab_project_name: Optional[str] = None) -> str:
+        def _run(self, name: str, description: str, author_id: int = 1, create_gitlab_project: bool = True, gitlab_project_name: Optional[str] = None) -> str:
             try:
+                # Create the knowledge base insert model
+                from models.knowledge_base import KnowledgeBase
+                knowledge_base = KnowledgeBase.InsertModel(
+                    name=name,
+                    description=description,
+                    author_id=author_id
+                )
+                
                 # Step 1: Create the knowledge base
                 kb_id = kb_Operations.insert_knowledge_base(knowledge_base)
                 if not kb_id:
@@ -267,7 +279,7 @@ class KnowledgeBaseTools():
                             visibility="public"
                         )
                         
-                        if project:
+                        if project and project.get('id'):
                             result += f"🦊 **GitLab Project Created & Linked!**\n"
                             result += f"🆔 **Project ID:** {project['id']}\n"
                             result += f"📁 **Project Name:** {project['name']}\n"
@@ -294,18 +306,35 @@ class KnowledgeBaseTools():
                             result += f"   2. Verify GitLab token permissions\n"
                             result += f"   3. Manually create project or use: GitLabCreateProjectForKBTool\n\n"
                     
-                    except ImportError:
-                        result += f"⚠️ **GitLab Integration Unavailable**\n"
-                        result += f"   GitLab operations not available. Knowledge base created without project integration.\n"
-                        result += f"   Install GitLab dependencies to enable automatic project creation.\n\n"
+                    except ImportError as e:
+                        result += f"❌ **Critical Error: GitLab Integration Unavailable**\n"
+                        result += f"   Missing dependency: {str(e)}\n"
+                        result += f"   **REQUIRED:** GitLab project creation is critical for workflow!\n"
+                        result += f"   **Fix:** Run 'pip install python-gitlab==4.13.0'\n"
+                        result += f"   Knowledge base created but will not function properly without GitLab project.\n\n"
                     except Exception as e:
-                        result += f"⚠️ **GitLab Integration Error:** {str(e)}\n"
+                        result += f"❌ **Critical Error: GitLab Project Creation Failed**\n"
+                        result += f"   Error: {str(e)}\n"
+                        result += f"   **REQUIRED:** GitLab project is critical for agent workflow!\n"
+                        result += f"   **Troubleshooting:**\n"
+                        result += f"   1. Check GitLab server: {gitlab_ops.gitlab_url if 'gitlab_ops' in locals() else 'http://localhost:8929'}\n"
+                        result += f"   2. Verify GITLAB_PAT environment variable\n"
+                        result += f"   3. Ensure token has 'api' and 'write_repository' scopes\n"
+                        result += f"   4. Check if GitLab user has project creation permissions\n"
+                        result += f"   **Manual Fix:** Create GitLab project manually and link to KB ID {kb_id}\n\n"
+                    except Exception as e:
+                        result += f"⚠️ **GitLab Integration Error**\n"
+                        result += f"   Error: {str(e)}\n"
                         result += f"   Knowledge base created successfully, but GitLab project creation failed.\n"
                         result += f"   **Troubleshooting:**\n"
                         result += f"   - Check if GitLab server is running\n"
                         result += f"   - Verify GITLAB_PAT environment variable is set\n"
                         result += f"   - Ensure GitLab token has project creation permissions\n"
                         result += f"   **Manual Creation:** Use GitLabCreateProjectForKBTool with KB ID {kb_id}\n\n"
+                else:
+                    result += f"📋 **GitLab Integration Skipped**\n"
+                    result += f"   Knowledge base created without GitLab project integration.\n"
+                    result += f"   You can create a GitLab project manually if needed.\n\n"
                 
                 result += f"🎯 **Next Steps:**\n"
                 result += f"   1. Use KnowledgeBaseSetContext with KB ID {kb_id}\n"
@@ -436,21 +465,39 @@ class KnowledgeBaseTools():
         return_direct: bool = False
 
         class KnowledgeBaseUpdateKnowledgeBaseInputModel(BaseModel):
-            knowledge_base: KnowledgeBase.UpdateModel = Field(description="knowledge_base")
+            id: int = Field(description="ID of the knowledge base to update")
+            name: str = Field(description="New name/title of the knowledge base")
+            description: str = Field(description="New description of the knowledge base")
+            author_id: int = Field(description="ID of the author (user)")
+            is_active: bool = Field(default=True, description="Whether the knowledge base is active")
+            gitlab_project_id: Optional[int] = Field(default=None, description="GitLab project ID")
 
             # Validation method to check parameter input from agent
-            @field_validator("knowledge_base")
-            def validate_query_param(knowledge_base):
-                if not knowledge_base:
-                    raise ValueError("KnowledgeBaseUpdateKnowledgeBase error: knowledge_base parameter is empty")
-                else:
-                    return knowledge_base
+            @field_validator("id")
+            def validate_id_param(cls, id_val):
+                if not id_val or id_val <= 0:
+                    raise ValueError("KnowledgeBaseUpdateKnowledgeBase error: id parameter must be a positive integer")
+                return id_val
                 
         args_schema: Optional[ArgsSchema] = KnowledgeBaseUpdateKnowledgeBaseInputModel
     
-        def _run(self, knowledge_base: KnowledgeBase.UpdateModel) -> KnowledgeBase.BaseModel:
-            knowledge_base=kb_Operations.update_knowledge_base(knowledge_base)
-            return knowledge_base
+        def _run(self, id: int, name: str, description: str, author_id: int, is_active: bool = True, gitlab_project_id: Optional[int] = None) -> KnowledgeBase.BaseModel:
+            try:
+                # Create the knowledge base update model
+                from models.knowledge_base import KnowledgeBase
+                knowledge_base = KnowledgeBase.UpdateModel(
+                    id=id,
+                    name=name,
+                    description=description,
+                    author_id=author_id,
+                    is_active=is_active,
+                    gitlab_project_id=gitlab_project_id
+                )
+                
+                # Update the knowledge base
+                return kb_Operations.update_knowledge_base(knowledge_base)
+            except Exception as e:
+                raise Exception(f"Failed to update knowledge base: {str(e)}")
         
 
     class KnowledgeBaseGetArticleHierarchy(BaseTool):

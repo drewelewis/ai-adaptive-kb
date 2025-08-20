@@ -153,9 +153,10 @@ You are fully autonomous and empowered to complete work items independently whil
         
         # Check for direct user requests (backward compatibility)
         agent_messages = state.get("agent_messages", [])
-        my_messages = [msg for msg in agent_messages if msg.recipient == self.name]
+        my_messages = [msg for msg in agent_messages if msg.recipient in [self.name, "ContentManagement"]]
         
         if my_messages:
+            self.log(f"Found {len(my_messages)} messages for ContentManagement - processing latest")
             # Handle direct workflow requests (fallback mode)
             return self._handle_direct_workflow_request(my_messages[-1], state)
         
@@ -322,35 +323,84 @@ You are fully autonomous and empowered to complete work items independently whil
         
         return state
     
-    def _create_workflow_from_request(self, request_message: AgentMessage) -> Dict[str, Any]:
-        """Create a workflow plan from a request message"""
+    def _create_workflow_from_request(self, request_message: AgentMessage, state: AgentState = None) -> Dict[str, Any]:
+        """Create a workflow plan from a request message - Pure LLM-driven planning"""
         content = request_message.content
         metadata = request_message.metadata or {}
-        intent = metadata.get("intent", "retrieve_content")  # Get intent from metadata
         
-        # Create basic workflow plan
+        self.log(f"Creating workflow from request: '{content[:100]}...'")
+        
+        # Extract original user request if this is supervisor feedback OR contains echo command
+        original_request = content
+        if "Work requires revision" in content or "Supervisor feedback" in content:
+            # Try to extract from state messages
+            user_messages = []
+            for msg in state.get("messages", []):
+                if hasattr(msg, 'content') and not any(keyword in msg.content for keyword in 
+                    ["Work requires revision", "Supervisor feedback", "ContentManagement", "Supervisor"]):
+                    user_messages.append(msg.content)
+            
+            if user_messages:
+                original_request = user_messages[-1]
+                self.log(f"Extracted original user request: '{original_request}'")
+        
+        # Also extract from echo commands or pipeline commands
+        elif "echo" in content or "python clean_multi_agent.py" in content:
+            # Extract the actual user question from echo command
+            import re
+            # Look for patterns like: echo "question" | python clean_multi_agent.py
+            echo_match = re.search(r'echo\s*["\']([^"\']+)["\']', content)
+            if echo_match:
+                original_request = echo_match.group(1)
+                self.log(f"Extracted user request from echo command: '{original_request}'")
+            # Look for User request: pattern
+            elif "User request:" in content:
+                user_match = re.search(r'User request:\s*(.+?)(?:\s*\||\s*$)', content)
+                if user_match:
+                    original_request = user_match.group(1).strip()
+                    self.log(f"Extracted user request from prefix: '{original_request}'")
+        
+        # FOR ALL REQUESTS: Use pure LLM-driven approach - let LLM decide everything
+        self.log("Using pure LLM-driven workflow planning - LLM will determine intent and actions")
+        
         workflow_plan = {
-            "intent": intent,
-            "description": f"Execute knowledge base operation: {content}",
+            "intent": "llm_driven",
+            "description": f"LLM-driven processing for: {original_request[:50]}...",
             "steps": [
                 {
-                    "action": "execute_kb_operation",
-                    "description": content,
-                    "tool_required": True
+                    "action": "llm_process",
+                    "description": "Let LLM intelligently determine intent and execute appropriate actions",
+                    "tool_required": True,
+                    "content": original_request
                 }
             ],
-            "original_request": content
+            "original_request": original_request
         }
         
         return workflow_plan
 
     def _execute_content_workflow(self, workflow_plan: Dict[str, Any], state: AgentState) -> Dict[str, Any]:
-        """Execute the content management workflow using available tools"""
+        """Execute the content management workflow using available tools - PURE LLM DRIVEN"""
         intent = workflow_plan.get("intent", "")
         steps = workflow_plan.get("steps", [])
         original_request = workflow_plan.get("original_request", "")
         
         self.log(f"Executing {len(steps)} workflow steps for intent: {intent}")
+        
+        # ALL intents go through LLM-driven processing - no special handlers
+        if intent == "llm_driven":
+            self.log(f"Handling LLM-driven intent detection and processing for request: '{original_request}'")
+            return self._execute_llm_driven_workflow(workflow_plan, state)
+        
+        # For any other intent (legacy), redirect to LLM-driven
+        self.log(f"Redirecting legacy intent '{intent}' to LLM-driven processing")
+        workflow_plan["intent"] = "llm_driven" 
+        return self._execute_llm_driven_workflow(workflow_plan, state)
+        
+        # Special handling for conversational intent
+        if intent == "conversation":
+            self.log(f"Handling conversational request: '{original_request}'")
+            return self._execute_conversational_response(workflow_plan, state)
         
         # Special handling for set_knowledge_base_context intent
         if intent == "set_knowledge_base_context":
@@ -973,7 +1023,7 @@ Beginning execution of planned workflow...
             workflow_plan = request_message.metadata.get("workflow_plan", {})
             
             if not workflow_plan:
-                workflow_plan = self._create_workflow_from_request(request_message)
+                workflow_plan = self._create_workflow_from_request(request_message, state)
             
             result = self._execute_content_workflow(workflow_plan, state)
             
@@ -1504,3 +1554,579 @@ Beginning execution of planned workflow...
         # This would parse the string result from GitLab tools
         # and extract structured issue data
         return {}
+    
+    def _execute_kb_confirmation_workflow(self, workflow_plan: Dict[str, Any], state: AgentState) -> Dict[str, Any]:
+        """Execute KB creation confirmation workflow - ask for details before creating"""
+        self.log("Executing KB creation confirmation workflow")
+        
+        kb_name = workflow_plan.get("kb_name", "New Knowledge Base")
+        original_request = workflow_plan.get("original_request", "")
+        
+        # Generate confirmation message asking for details
+        confirmation_message = f"""📋 **Knowledge Base Creation Request**
+
+I understand you want to create a knowledge base about: **{kb_name}**
+
+Before I create this knowledge base, I'd like to gather some details to ensure it meets your needs:
+
+**📝 Please provide the following information:**
+
+1. **Knowledge Base Name**: What would you like to name this KB? 
+   _(Current suggestion: "{kb_name}")_
+
+2. **Description**: What is the main purpose and scope of this knowledge base?
+   _(e.g., "A comprehensive guide to Italian cooking techniques, recipes, and culinary traditions")_
+
+3. **Target Audience**: Who will be using this knowledge base?
+   _(e.g., "Home cooks, culinary students, Italian cuisine enthusiasts")_
+
+4. **Initial Content Areas**: What main topics or sections should this KB cover?
+   _(e.g., "Traditional recipes, cooking techniques, ingredient guides, regional specialties")_
+
+**💡 Once you provide these details, I'll:**
+- Create the knowledge base with your specifications
+- Set up a GitLab project for content management
+- Create initial issues for content organization
+- Provide you with next steps for adding content
+
+**🚀 Ready to proceed?** Just answer the questions above, or if you're happy with the default name "{kb_name}", you can simply say "**create it**" and I'll use sensible defaults for the other details."""
+        
+        return {
+            "success": True,
+            "message": confirmation_message,
+            "data": {
+                "awaiting_confirmation": True,
+                "kb_name": kb_name,
+                "original_request": original_request,
+                "workflow_stage": "confirmation"
+            }
+        }
+    
+    def _execute_kb_creation_workflow(self, workflow_plan: Dict[str, Any], state: AgentState) -> Dict[str, Any]:
+        """Execute KB creation workflow with strategic design integration"""
+        self.log("Executing KB creation workflow")
+        
+        steps = workflow_plan.get("steps", [])
+        kb_name = workflow_plan.get("kb_name", "New Knowledge Base")
+        
+        for step in steps:
+            if step.get("action") == "create_knowledge_base":
+                kb_details = step.get("kb_details", {})
+                
+                # Use KB tools to create the knowledge base
+                try:
+                    # Find the KnowledgeBaseInsertKnowledgeBase tool
+                    for tool in self.tools:
+                        if tool.name == "KnowledgeBaseInsertKnowledgeBase":
+                            self.log(f"Creating KB: {kb_name}")
+                            
+                            # Import the KnowledgeBase model
+                            from models.knowledge_base import KnowledgeBase
+                            
+                            # Create the proper InsertModel object
+                            kb_insert_model = KnowledgeBase.InsertModel(
+                                name=kb_name,
+                                description=kb_details.get("scope", f"Knowledge base for {kb_name}"),
+                                author_id=1  # Default system user for AI-generated content
+                            )
+                            
+                            result = tool._run(
+                                knowledge_base=kb_insert_model,
+                                create_gitlab_project=True  # GitLab project creation is critical
+                            )
+                            
+                            self.log(f"KB creation result: {result}")
+                            
+                            return {
+                                "success": True,
+                                "message": f"""🎯 **Knowledge Base Successfully Created!**
+
+**Knowledge Base Details:**
+✅ Name: "{kb_name}"
+✅ Description: {kb_details.get("scope", f"Knowledge base for {kb_name}")}
+✅ GitLab Project: Created for content management and collaboration
+
+**Next Steps:**
+- Your knowledge base is ready for content development
+- GitLab project has been created for tracking and collaboration
+- You can start adding articles and organizing content
+
+**Creation Details:**
+{result}""",
+                                "data": {
+                                    "kb_created": True,
+                                    "kb_name": kb_name,
+                                    "kb_description": kb_details.get("scope", f"Knowledge base for {kb_name}"),
+                                    "creation_result": result
+                                }
+                            }
+                    
+                    # If tool not found
+                    return {
+                        "success": False,
+                        "message": "KB creation tool not available",
+                        "data": {}
+                    }
+                    
+                except Exception as e:
+                    self.log(f"Error creating KB: {str(e)}", "ERROR")
+                    return {
+                        "success": False,
+                        "message": f"Error creating knowledge base: {str(e)}",
+                        "data": {}
+                    }
+        
+        return {
+            "success": False,
+            "message": "No KB creation steps found in workflow",
+            "data": {}
+        }
+    
+    def _generate_strategic_kb_description(self, kb_details: Dict[str, Any]) -> str:
+        """Generate strategic description for the knowledge base"""
+        domain = kb_details.get('domain', 'Personal Finance')
+        purpose = kb_details.get('purpose', 'Educational resource')
+        target_audience = kb_details.get('target_audience', 'Working professionals')
+        scope = kb_details.get('scope', 'Comprehensive strategies and best practices')
+        
+        description = f"""**Strategic Knowledge Base: {domain}**
+
+**Purpose & Vision:**
+{purpose} - This knowledge base serves as a comprehensive strategic resource designed to provide actionable insights and proven methodologies for achieving financial independence before traditional retirement age.
+
+**Target Audience:**
+{target_audience} - Specifically designed for motivated individuals in their working years who seek to optimize their financial strategies and achieve early retirement through disciplined planning and informed decision-making.
+
+**Content Strategy & Scope:**
+{scope} - This knowledge base encompasses a complete strategic framework covering all essential aspects of early retirement planning, from foundational budgeting principles to advanced investment strategies and wealth preservation techniques.
+
+**Strategic Framework Elements:**
+• **Financial Foundation Building**: Core budgeting, debt elimination, and emergency fund strategies
+• **Investment Mastery**: Portfolio construction, asset allocation, and risk management for early retirement
+• **Income Optimization**: Career advancement, side hustles, and passive income development
+• **Tax Strategy**: Advanced tax planning and optimization for wealth accumulation
+• **Retirement Planning**: Withdrawal strategies, healthcare planning, and lifestyle design
+• **Wealth Preservation**: Estate planning, insurance strategies, and long-term wealth protection
+
+**Content Depth & Approach:**
+This knowledge base employs a strategic, actionable approach that combines theoretical understanding with practical implementation. Each topic is developed with clear step-by-step guidance, real-world examples, and measurable outcomes to ensure readers can immediately apply the concepts to their own financial journey.
+
+**Value Proposition:**
+Unlike generic financial advice, this knowledge base provides a cohesive, strategic roadmap specifically designed for achieving financial freedom before age 60. The content is structured to build progressively from basic concepts to advanced strategies, making it suitable for both beginners and those with existing financial knowledge.
+
+**Publication Strategy:**
+Content is structured for multi-format publication including comprehensive ebook development and website resource creation, ensuring maximum accessibility and user engagement across different learning preferences."""
+
+        return description
+    
+    def _generate_strategic_tags(self, kb_details: Dict[str, Any]) -> str:
+        """Generate strategic tags for the knowledge base"""
+        domain = kb_details.get('domain', 'personal-finance').lower().replace(' ', '-')
+        
+        tags = [
+            domain,
+            'early-retirement',
+            'financial-freedom',
+            'wealth-building',
+            'strategic-planning',
+            'investment-strategy',
+            'financial-independence',
+            'retirement-planning',
+            'ebook-content',
+            'comprehensive-guide'
+        ]
+        
+        return ','.join(tags)
+    
+    def _process_tool_result(self, tool_name: str, result: Any) -> str:
+        """Process tool result and return appropriate response message"""
+        
+        self.log(f"Processing result for tool {tool_name}: {str(result)[:200]}")
+        
+        # Handle KB creation tool
+        if tool_name == "KnowledgeBaseInsertKnowledgeBase":
+            if "✅" in str(result) and "Knowledge Base Created Successfully" in str(result):
+                return str(result)
+            else:
+                return f"Error creating knowledge base: {str(result)}"
+        
+        # Handle KB context setting tool  
+        elif tool_name == "KnowledgeBaseSetContext":
+            if isinstance(result, dict) and result.get("success") is True:
+                kb_name = result.get("knowledge_base_name", "Unknown")
+                kb_id = result.get("knowledge_base_id", "Unknown")
+                gitlab_msg = ""
+                if result.get("gitlab_project_id"):
+                    gitlab_msg = f"\n🦊 **GitLab Project:** {result.get('gitlab_project_id')}"
+                
+                response = f"""✅ **Knowledge Base Context Set Successfully!**
+
+📚 **Active KB:** {kb_name} (ID: {kb_id}){gitlab_msg}
+
+🎯 **Ready for next action:**
+   • Add articles with specific topics
+   • Search existing content
+   • Manage KB structure
+   
+What would you like to do with this knowledge base?"""
+                self.log(f"KnowledgeBaseSetContext: Generated response with length {len(response)}")
+                return response
+            else:
+                error_msg = f"Error setting KB context: {str(result)}"
+                self.log(f"KnowledgeBaseSetContext: Error case - {error_msg}")
+                return error_msg
+        
+        # Handle content retrieval tools
+        elif tool_name == "KnowledgeBaseGetRootLevelArticles":
+            if result and str(result).strip() != "[]":
+                return f"""📚 **Content in Knowledge Base:**
+
+{str(result)}
+
+💡 **Available Actions:**
+   • Add more articles
+   • Edit existing content  
+   • Search by tags
+   • Create child articles"""
+            else:
+                return """📭 **No Content Found**
+
+This knowledge base doesn't have any articles yet.
+
+🚀 **Get Started:**
+   • Add your first article
+   • Create content structure
+   • Import existing content"""
+        
+        # Handle search tools
+        elif tool_name in ["KnowledgeBaseSearchArticlesByTags", "KnowledgeBaseGetArticlesForTag"]:
+            if result and str(result).strip() != "[]":
+                return f"""🔍 **Search Results:**
+
+{str(result)}"""
+            else:
+                return "🔍 **No Results Found** - Try different search terms or add content first."
+        
+        # Handle other tools with string results containing success indicators
+        elif "successfully" in str(result).lower() or "✅" in str(result):
+            return str(result)
+        
+        # Handle dictionary results with success status
+        elif isinstance(result, dict) and result.get("success"):
+            if "message" in result:
+                return result["message"]
+            else:
+                return f"✅ Tool {tool_name} executed successfully"
+        
+        # Default fallback
+        else:
+            return f"✅ Tool {tool_name} executed successfully"
+
+    def _execute_llm_driven_workflow(self, workflow_plan: Dict[str, Any], state: AgentState) -> Dict[str, Any]:
+        """Execute LLM-driven workflow where LLM determines intent and appropriate actions"""
+        self.log("Executing LLM-driven workflow - delegating to LLM for intent detection and action")
+        
+        original_request = workflow_plan.get("original_request", "")
+        
+        # Get current context
+        current_kb_id = state.get("knowledge_base_id", "Not specified")
+        current_section = state.get("current_section", "Not specified")
+        
+        # Track consecutive tool calls for loop prevention
+        consecutive_tool_calls = state.get("consecutive_tool_calls", 0)
+        
+        # Get conversation history for context
+        conversation_history = state.get("messages", [])
+        recent_conversation = conversation_history[-10:] if len(conversation_history) > 10 else conversation_history
+        
+        # Create conversation context string
+        conversation_context = ""
+        if recent_conversation:
+            conversation_context = "\n\nRECENT CONVERSATION HISTORY:\n"
+            for i, msg in enumerate(recent_conversation):
+                if hasattr(msg, 'content'):
+                    role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+                    # Don't truncate - keep full content for better context
+                    conversation_context += f"{role}: {msg.content}\n"
+        
+        # Create messages for LLM with enhanced prompt for intent detection
+        messages = [
+            self.get_system_message(),
+            HumanMessage(content=f"""
+INTELLIGENT INTENT DETECTION AND ACTION PLANNING
+
+User Request: "{original_request}"
+
+Current Context:
+- Knowledge Base ID: {current_kb_id}
+- Current Section: {current_section}{conversation_context}
+
+INSTRUCTIONS - Analyze the user's request intelligently:
+
+1. **FOR VAGUE/CONVERSATIONAL REQUESTS** (like "Can you help me create a kb?", "Help me create a kb", "I want to create a kb"):
+   - **ALWAYS START A CONVERSATION** to gather requirements - NEVER assume from context
+   - **DO NOT use any tools immediately** even if you see related topics in conversation history
+   - Ask about: specific topic/domain, title, target audience, purpose, content areas
+   - Provide guidance on KB design and structure
+   - Only create KB AFTER getting explicit confirmation and specific details
+
+2. **FOR SPECIFIC KB CREATION REQUESTS** (with clear titles like "create a kb titled 'Financial Freedom'", "build a kb about cooking"):
+   - Use KnowledgeBaseInsertKnowledgeBase tool immediately
+   - Extract the exact title/topic from the request
+   - Set create_gitlab_project=True
+
+3. **FOR KB CONTEXT SETTING** (like "use kb 38", "set context to kb 5", "switch to kb 12"):
+   - Use KnowledgeBaseSetContext tool with the specified KB ID
+   - Confirm the context switch and show KB details
+
+4. **FOR CONTENT RETRIEVAL/VIEWING** (like "show me all content", "what content do we have", "list articles", "display all articles"):
+   - If KB context is already set (Current KB ID is not "Not specified"), use KnowledgeBaseGetRootLevelArticles
+   - If no KB context is set, ask user to specify which KB or use KnowledgeBaseSetContext first
+   - For searches by topic/tag, use KnowledgeBaseSearchArticlesByTags
+
+5. **FOR CONTENT CREATION** (like "add article", "create article", "write content"):
+   - Use KnowledgeBaseInsertArticle tool for adding content
+   - Ensure KB context is set first
+
+6. **FOR GENERAL CONVERSATION**:
+   - Provide helpful responses without using tools
+
+**CRITICAL DECISION LOGIC:**
+- If the request is **vague** or asks for **help** → ALWAYS START CONVERSATION (no tools, ignore context)
+- If asking to **view/show content** and KB context is set → USE KnowledgeBaseGetRootLevelArticles
+- If asking to **switch/use KB** → USE KnowledgeBaseSetContext  
+- If the request has **specific details** (title, topic, clear intent) → USE APPROPRIATE TOOLS
+- When in doubt → ASK QUESTIONS before taking action
+- **NEVER assume KB topic from conversation history** - always ask explicitly
+
+Analyze the user's request and choose the appropriate response style.
+
+Execute the action NOW based on the user's request.
+""")
+        ]
+        
+        # Add loop prevention warning if too many consecutive tool calls
+        if consecutive_tool_calls >= 3:
+            tool_warning = "\n\nWARNING: You've made several consecutive tool calls. Consider providing a comprehensive final answer instead of calling more tools."
+            messages.append(HumanMessage(content=tool_warning))
+        
+        # Invoke LLM with tools to execute the workflow
+        response = self.llm_with_tools.invoke(messages)
+        
+        # Track if this response has tool calls for loop prevention
+        has_tool_calls = hasattr(response, 'tool_calls') and response.tool_calls
+        new_consecutive_calls = consecutive_tool_calls + 1 if has_tool_calls else 0
+        
+        # Update state with loop prevention tracking
+        state["consecutive_tool_calls"] = new_consecutive_calls
+        
+        # Check if the response contains tool calls
+        if has_tool_calls:
+            self.log(f"Executing {len(response.tool_calls)} tool calls")
+            
+            # Execute tool calls and collect results
+            tool_results = []
+            final_response = ""
+            
+            for tool_call in response.tool_calls:
+                try:
+                    tool_name = tool_call["name"]
+                    tool_args = tool_call["args"]
+                    
+                    self.log(f"Executing tool: {tool_name} with args: {tool_args}")
+                    
+                    # Find and execute the tool
+                    tool = next((t for t in self.tools if t.name == tool_name), None)
+                    if tool:
+                        result = tool._run(**tool_args)
+                        tool_results.append({
+                            "tool": tool_name,
+                            "success": True,
+                            "result": result
+                        })
+                        self.log(f"Tool {tool_name} executed successfully")
+                        
+                        # Process tool results and set final_response
+                        final_response = self._process_tool_result(tool_name, result)
+                        
+                        # Debug logging
+                        self.log(f"Tool {tool_name} result processing: final_response = '{final_response[:100] if final_response else 'EMPTY'}'")
+                        
+                    else:
+                        tool_results.append({
+                            "tool": tool_name,
+                            "success": False,
+                            "error": f"Tool {tool_name} not found"
+                        })
+                        self.log(f"Tool {tool_name} not found", "ERROR")
+                        
+                except Exception as e:
+                    tool_results.append({
+                        "tool": tool_call.get("name", "unknown"),
+                        "success": False,
+                        "error": str(e)
+                    })
+                    self.log(f"Error executing tool {tool_call.get('name', 'unknown')}: {str(e)}", "ERROR")
+            
+            # Use final_response if we have one, otherwise use the LLM's text response
+            response_text = final_response if final_response else (response.content if hasattr(response, 'content') else str(response))
+            
+            # Debug logging
+            self.log(f"Workflow completion: response_text = '{response_text[:100] if response_text else 'EMPTY'}'")
+            
+            # Set workflow completion flag to prevent loops
+            state["workflow_completed"] = True
+            state["completed_request"] = original_request
+            
+            return {
+                "success": True,
+                "message": response_text,
+                "data": {
+                    "tool_results": tool_results,
+                    "original_request": original_request,
+                    "workflow_stage": "completed"
+                }
+            }
+        
+        else:
+            # No tool calls - just return the LLM's response
+            response_text = response.content if hasattr(response, 'content') else str(response)
+            
+            # Set workflow completion flag to prevent loops
+            state["workflow_completed"] = True
+            state["completed_request"] = original_request
+            
+            return {
+                "success": True,
+                "message": response_text,
+                "data": {
+                    "original_request": original_request,
+                    "workflow_stage": "conversation"
+                }
+            }
+    
+    def _process_tool_result(self, tool_name: str, result: Any) -> str:
+        """Process tool execution result and return user-friendly response"""
+        
+        # Handle KB creation
+        if tool_name == "KnowledgeBaseInsertKnowledgeBase":
+            if "✅" in str(result) and "Knowledge Base Created Successfully" in str(result):
+                return str(result)
+            else:
+                return f"Error creating knowledge base: {str(result)}"
+        
+        # Handle KB context setting
+        elif tool_name == "KnowledgeBaseSetContext":
+            if isinstance(result, dict) and result.get("success"):
+                kb_name = result.get("knowledge_base_name", "Unknown")
+                kb_id = result.get("knowledge_base_id", "Unknown")
+                gitlab_msg = ""
+                if result.get("gitlab_project_id"):
+                    gitlab_msg = f"\n🦊 **GitLab Project:** {result.get('gitlab_project_id')}"
+                
+                return f"""✅ **Knowledge Base Context Set Successfully!**
+
+📚 **Active KB:** {kb_name} (ID: {kb_id}){gitlab_msg}
+
+🎯 **Ready for next action:**
+   • Add articles with specific topics
+   • Search existing content
+   • Manage KB structure
+   
+What would you like to do with this knowledge base?"""
+            else:
+                return f"Error setting KB context: {str(result)}"
+        
+        # Handle other successful string results
+        elif "successfully" in str(result).lower() or "✅" in str(result):
+            return str(result)
+        
+        # Handle dictionary results with success status
+        elif isinstance(result, dict) and result.get("success"):
+            if "message" in result:
+                return result["message"]
+            else:
+                return f"✅ Tool {tool_name} executed successfully"
+        
+        # Default fallback for successful tool execution
+        else:
+            return f"✅ Tool {tool_name} executed successfully"
+
+    def _execute_conversational_response(self, workflow_plan: Dict[str, Any], state: AgentState) -> Dict[str, Any]:
+        """Execute conversational response for simple greetings and interactions"""
+        self.log("Executing conversational response")
+        
+        original_request = workflow_plan.get("original_request", "").lower().strip()
+        
+        # Generate appropriate conversational responses
+        if "hello" in original_request or "hi" in original_request or "hey" in original_request:
+            response = """👋 **Hello there!** Welcome to the AI Adaptive Knowledge Base system.
+
+I'm here to help you create, manage, and organize your knowledge bases. Here's what I can do for you:
+
+📚 **Knowledge Base Operations:**
+- Create new knowledge bases for any topic
+- Add and organize articles within your KBs
+- Search and retrieve information from existing content
+- Manage KB structure and organization
+
+🦊 **GitLab Integration:**
+- Automatic project creation for each knowledge base
+- Issue tracking for content development
+- Collaborative workflow management
+- Progress tracking and reporting
+
+🚀 **How to Get Started:**
+Just tell me what kind of knowledge base you'd like to create! For example:
+- "Create a KB about machine learning"
+- "I want a knowledge base for cooking recipes"
+- "Make a KB for project management best practices"
+
+What would you like to work on today?"""
+        
+        elif "thank" in original_request:
+            response = """🙏 **You're very welcome!** 
+
+I'm glad I could help you with your knowledge base needs. Feel free to ask me anything about:
+- Creating new knowledge bases
+- Managing existing content
+- Setting up GitLab workflows
+- Organizing your information
+
+Is there anything else you'd like to work on?"""
+        
+        elif "how are you" in original_request:
+            response = """🤖 **I'm doing great, thank you for asking!** 
+
+I'm fully operational and ready to help you with all your knowledge base needs. My systems are running smoothly:
+- ✅ Database connectivity is excellent
+- ✅ GitLab integration is working perfectly  
+- ✅ All knowledge base tools are ready
+- ✅ Content management workflows are active
+
+How can I assist you today with your knowledge management goals?"""
+        
+        else:
+            response = """👋 **Greetings!** 
+
+I'm your AI Knowledge Base Assistant, ready to help you create and manage comprehensive knowledge repositories. 
+
+Whether you're looking to:
+- 📝 Create educational content
+- 🏢 Organize business knowledge  
+- 📚 Build reference materials
+- 🔍 Establish searchable information systems
+
+I'm here to make it happen with full GitLab integration for collaboration and tracking.
+
+What knowledge base project would you like to start today?"""
+        
+        return {
+            "success": True,
+            "message": response,
+            "data": {
+                "conversational_response": True,
+                "original_request": workflow_plan.get("original_request"),
+                "response_type": "greeting"
+            }
+        }

@@ -1,79 +1,97 @@
 @echo off
-REM GitLab Agent User Setup Script for Windows
-REM Creates GitLab users for all AI agents in the autonomous swarming system
+REM Quick GitLab Environment Setup and Agent User Creation
+REM This script loads .env file and sets up GitLab agent users
 
 echo.
 echo ========================================
-echo  GitLab AI Agent User Setup
+echo  GitLab Agent Setup with .env file
 echo ========================================
 echo.
 
-REM Check if Python is available
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo ERROR: Python is not installed or not in PATH
-    echo Please install Python and try again
+REM Check if .env file exists
+if not exist ".env" (
+    echo ERROR: .env file not found in current directory
+    echo Please ensure you have a .env file with GitLab configuration
+    echo Expected location: %CD%\.env
     pause
     exit /b 1
 )
 
-REM Check if we're in the correct directory
-if not exist "scripts\gitlab_add_agent_users.py" (
-    echo ERROR: Please run this script from the ai-adaptive-kb root directory
-    echo Current directory: %CD%
-    pause
-    exit /b 1
+echo INFO: Found .env file, loading environment variables...
+
+REM Load environment variables from .env file
+for /f "usebackq tokens=1,* delims==" %%i in (".env") do (
+    if not "%%i"=="" (
+        if not "%%i"=="rem" (
+            if not "%%i"=="#" (
+                set "%%i=%%j"
+            )
+        )
+    )
 )
 
-REM Check for environment variables
+echo INFO: Environment variables loaded from .env file
+
+REM Validate required GitLab variables
 if "%GITLAB_URL%"=="" (
-    echo WARNING: GITLAB_URL environment variable not set
-    echo Using default: http://localhost:8929
+    echo ERROR: GITLAB_URL not found in .env file
+    echo Please add: GITLAB_URL=http://your-gitlab-server:port
+    pause
+    exit /b 1
 )
 
 if "%GITLAB_ADMIN_PAT%"=="" (
     if "%GITLAB_PAT%"=="" (
-        echo ERROR: Neither GITLAB_ADMIN_PAT nor GITLAB_PAT environment variable is set
-        echo Please set one of these variables with your GitLab admin token
+        echo ERROR: Neither GITLAB_ADMIN_PAT nor GITLAB_PAT found in .env file
+        echo Please add one of these to your .env file:
+        echo   GITLAB_ADMIN_PAT=your_admin_token_here
+        echo   GITLAB_PAT=your_admin_token_here
         pause
         exit /b 1
     ) else (
-        echo INFO: Using GITLAB_PAT as admin token
+        echo INFO: Using GITLAB_PAT from .env file
     )
 ) else (
-    echo INFO: Using GITLAB_ADMIN_PAT as admin token
+    echo INFO: Using GITLAB_ADMIN_PAT from .env file
 )
 
+echo INFO: GitLab URL: %GITLAB_URL%
+
 echo.
-echo Available Options:
-echo 1. Create all agent users (default)
-echo 2. List existing agent users
-echo 3. Create with dry-run (preview only)
-echo 4. Update existing agent users
-echo 5. Exit
+echo Available Actions:
+echo 1. Validate GitLab setup and connection
+echo 2. Preview agent users (dry-run)
+echo 3. Create all agent users
+echo 4. List existing agent users
+echo 5. Update existing agent users
+echo 6. Exit
 echo.
 
-set /p choice="Select option (1-5): "
+set /p choice="Select action (1-6): "
 
 if "%choice%"=="" set choice=1
 
 if "%choice%"=="1" (
     echo.
-    echo Creating GitLab users for all AI agents...
-    python scripts\gitlab_add_agent_users.py
+    echo === Validating GitLab Setup ===
+    python scripts\validate_gitlab_setup.py
 ) else if "%choice%"=="2" (
     echo.
-    echo Listing existing agent users...
-    python scripts\gitlab_add_agent_users.py --list
+    echo === Preview Agent Users (Dry Run) ===
+    python scripts\gitlab_add_agent_users.py --dry-run
 ) else if "%choice%"=="3" (
     echo.
-    echo Running dry-run (preview only)...
-    python scripts\gitlab_add_agent_users.py --dry-run
+    echo === Creating GitLab Agent Users ===
+    python scripts\gitlab_add_agent_users.py
 ) else if "%choice%"=="4" (
     echo.
-    echo Updating existing agent users...
-    python scripts\gitlab_add_agent_users.py --update-existing
+    echo === Listing Existing Agent Users ===
+    python scripts\gitlab_add_agent_users.py --list
 ) else if "%choice%"=="5" (
+    echo.
+    echo === Updating Existing Agent Users ===
+    python scripts\gitlab_add_agent_users.py --update-existing
+) else if "%choice%"=="6" (
     echo Exiting...
     exit /b 0
 ) else (
@@ -83,15 +101,15 @@ if "%choice%"=="1" (
 )
 
 echo.
-echo ========================================
-echo Script completed!
-echo ========================================
-
-REM Check if any errors occurred
 if errorlevel 1 (
-    echo.
-    echo WARNING: Script completed with errors
+    echo ========================================
+    echo WARNING: Command completed with errors
     echo Check the output above for details
+    echo ========================================
+) else (
+    echo ========================================
+    echo Command completed successfully!
+    echo ========================================
 )
 
 echo.

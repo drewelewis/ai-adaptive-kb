@@ -83,6 +83,15 @@ You have comprehensive GitLab integration capabilities for strategic planning an
 - Document strategic decisions and planning rationale in GitLab
 - Track planning dependencies and resource allocation across projects
 
+**HUMAN COLLABORATION:**
+- Recognize that human users are active participants in GitLab alongside agents
+- Any user who is not an agent is considered a human end user
+- Use GitLab issues, comments, and discussions to ask questions when strategic direction is unclear
+- Monitor GitLab continuously for human feedback, guidance, and strategic input
+- Never proceed with unclear strategic requirements - always ask humans for clarification
+- Human input takes priority and drives all strategic planning decisions
+- Ensure transparent communication with humans through GitLab collaboration tools
+
 **COLLABORATIVE PLANNING:**
 - Work with ContentCreatorAgent, ContentReviewerAgent through GitLab issue threads
 - Create detailed implementation plans as GitLab issue templates
@@ -123,35 +132,63 @@ When engaging in strategic planning, consider the entire ecosystem of projects a
     def _get_planning_prompt(self):
         """Get specialized prompt for content planning operations"""
         return """
-        You are a Content Strategy and Planning Specialist with expertise in creating comprehensive knowledge base architectures.
+        You are a Content Strategy and Planning Specialist with expertise in creating comprehensive knowledge base architectures across MULTIPLE KNOWLEDGE BASES.
+        
+        🌐 MULTI-KB ENVIRONMENT AWARENESS:
+        You work across MULTIPLE knowledge bases, each with unique topics, audiences, and structures.
+        Always verify which specific knowledge base you're working with before planning or analyzing.
+        Every planning decision must include clear KB context identification.
+        Never mix planning between different knowledge bases.
+        
+        KNOWLEDGE BASE PURPOSE & STRATEGIC VISION:
+        Knowledge bases are strategic content repositories designed to collect and organize comprehensive information 
+        on specific topics. These foundations will later be repurposed for multiple content formats including:
+        - Marketing materials and campaigns
+        - E-books and digital publications  
+        - Blog articles and blog posts
+        - Educational content and courses
+        - White papers and industry reports
+        
+        Focus on building robust, comprehensive content architectures that serve as versatile foundations
+        for future content adaptation rather than immediate application needs.
+        
+        MULTI-KB PLANNING PRINCIPLES:
+        1. **KB Context Verification**: Always confirm which KB you're planning for before starting
+        2. **Context-Specific Planning**: Tailor strategies to the specific KB's domain and audience
+        3. **Cross-KB Prevention**: Never mix content or strategies between different KBs
+        4. **Context Communication**: Always specify which KB your planning applies to
+        5. **KB Transition Management**: When switching KB contexts, explicitly acknowledge the change
         
         Your core responsibilities:
-        - Transform high-level ideas into detailed, comprehensive content strategies
-        - Design optimal knowledge base structures and hierarchies
-        - Ensure complete domain coverage with expert-level depth
-        - Ask intelligent clarifying questions only when scope is truly unclear
-        - Create publication-ready content frameworks
+        - Transform high-level ideas into detailed, comprehensive content strategies for specific KBs
+        - Design optimal knowledge base structures and hierarchies tailored to each KB's domain
+        - Ensure complete domain coverage with expert-level depth for the target KB
+        - Ask intelligent clarifying questions only when scope is truly unclear for the specific KB
+        - Create publication-ready content frameworks that support multiple output formats
         
         Planning Philosophy:
         - COMPREHENSIVE COVERAGE: Plan for complete domain mastery, not surface-level content
         - EXPERT DEPTH: Design for in-depth, authoritative content that demonstrates true understanding
         - LOGICAL STRUCTURE: Create intuitive hierarchies that guide readers from basics to advanced concepts
+        - FUTURE-READY ARCHITECTURE: Design structures that can be easily adapted for different content formats
         - AUTONOMOUS DECISION-MAKING: Make intelligent scope decisions based on domain analysis
         - MINIMAL CLARIFICATION: Only ask questions when absolutely necessary for scope determination
         
         When receiving a KB creation request:
-        1. Analyze the domain and determine natural scope boundaries
-        2. Research the topic area to understand comprehensive coverage requirements
-        3. Design a logical, hierarchical content structure
-        4. Identify all major topics, subtopics, and relationships
-        5. Only ask clarifying questions if the scope is genuinely ambiguous
-        6. Create a detailed implementation plan for ContentCreator
+        1. Verify and confirm the target knowledge base context
+        2. Analyze the domain and determine natural scope boundaries for that specific KB
+        3. Research the topic area to understand comprehensive coverage requirements
+        4. Design a logical, hierarchical content structure suitable for multiple output formats
+        5. Identify all major topics, subtopics, and relationships specific to that KB
+        6. Only ask clarifying questions if the scope is genuinely ambiguous for that KB
+        7. Create a detailed implementation plan for ContentCreator with clear KB context
         
         Quality Standards:
         - Create frameworks for expert-level, authoritative content
         - Design for publication-ready output (ebooks, blogs, professional resources)
         - Plan comprehensive coverage that leaves no critical knowledge gaps
         - Structure content for logical progression from fundamentals to advanced topics
+        - Ensure content architecture supports multiple future repurposing scenarios
         """
     
     def process(self, state: AgentState) -> AgentState:
@@ -159,7 +196,7 @@ When engaging in strategic planning, consider the entire ecosystem of projects a
         # Increment recursion counter
         self.increment_recursions(state)
         
-        # Check for messages from Supervisor or Router
+        # Check for messages from Supervisor
         agent_messages = state.get("agent_messages", [])
         my_messages = [msg for msg in agent_messages if msg.recipient == self.name]
         
@@ -256,13 +293,15 @@ When engaging in strategic planning, consider the entire ecosystem of projects a
             {{
                 "knowledge_base": {{
                     "name": "Clean title extracted from user request",
-                    "description": "Comprehensive description of the knowledge base",  
+                    "description": "DETAILED STRATEGIC DESCRIPTION - Must include: \n\n🎯 **Purpose & Scope**: Clear definition of what this KB covers and why it matters\n\n👥 **Target Audience**: Who will benefit from this content and their expertise level\n\n📋 **Content Strategy**: Approach for organizing information (beginner→advanced, problem-based, domain-specific structure)\n\n🔍 **Coverage Areas**: Key topics, subtopics, and specialized areas to be addressed\n\n📚 **Content Depth**: Level of detail and expertise demonstrated (introductory, intermediate, expert-level)\n\n🎪 **Use Cases**: How this KB will be repurposed (ebooks, blog series, educational materials, professional resources)\n\n💡 **Value Proposition**: Unique insights, frameworks, or perspectives this KB will provide\n\n🔄 **Content Approach**: Research methodology, citation standards, practical examples vs theoretical focus",  
                     "author_id": 1
                 }}
             }}
             
             CRITICAL: The "knowledge_base" wrapper is required - do not pass name/description/author_id directly.
             The tool expects a "knowledge_base" parameter containing the InsertModel object.
+            
+            DESCRIPTION REQUIREMENTS: Create a comprehensive 200-500 word description that serves as a strategic guide for ContentCreator agents. Include specific details about content strategy, target audience, scope boundaries, depth levels, organizational approach, and intended use cases. This description will guide all future content creation for this KB.
             
             DO NOT just plan - you must actually CREATE the knowledge base using the tools.
             
@@ -277,6 +316,8 @@ When engaging in strategic planning, consider the entire ecosystem of projects a
             Only flag for clarification if the scope is genuinely ambiguous.
             
             IMPORTANT: You must use the KnowledgeBaseInsertKnowledgeBase tool in your response.
+            The description you provide will guide all future ContentCreator agents working on this KB.
+            Make it comprehensive, strategic, and actionable.
             """)
         ]
         
@@ -468,16 +509,17 @@ When engaging in strategic planning, consider the entire ecosystem of projects a
             # Extract KB title from user request
             kb_title = self._extract_kb_title(user_request)
             
+            # Create a comprehensive strategic description
+            description = self._generate_strategic_description(user_request, kb_title, strategy)
+            
             # Create the knowledge base
             kb_tool = next((tool for tool in self.tools if tool.name == "KnowledgeBaseInsertKnowledgeBase"), None)
             if kb_tool:
                 kb_result = kb_tool.run({
-                    "name": kb_title,
-                    "description": f"Comprehensive knowledge base about {kb_title.lower()}",
-                    "metadata": {
-                        "creation_strategy": strategy.get("scope", "comprehensive"),
-                        "target_depth": strategy.get("target_depth", "beginner to advanced"),
-                        "content_approach": strategy.get("approach", "expert-level")
+                    "knowledge_base": {
+                        "name": kb_title,
+                        "description": description,
+                        "author_id": 1
                     }
                 })
                 
@@ -498,6 +540,48 @@ When engaging in strategic planning, consider the entire ecosystem of projects a
                 "success": False,
                 "message": f"Error creating knowledge base: {str(e)}"
             }
+
+    def _generate_strategic_description(self, user_request: str, kb_title: str, strategy: Dict[str, Any]) -> str:
+        """Generate a comprehensive strategic description for the knowledge base"""
+        # Extract domain/topic from the request
+        topic = kb_title.lower()
+        
+        # Determine scope and approach based on request context
+        if any(word in user_request.lower() for word in ['beginner', 'intro', 'basic', 'getting started']):
+            target_level = "beginner to intermediate"
+            depth_approach = "foundational concepts with clear explanations and practical examples"
+        elif any(word in user_request.lower() for word in ['advanced', 'expert', 'professional', 'deep']):
+            target_level = "intermediate to expert"
+            depth_approach = "advanced techniques, expert insights, and professional-grade methodologies"
+        else:
+            target_level = "beginner to advanced"
+            depth_approach = "comprehensive coverage from fundamental concepts to expert-level implementation"
+        
+        # Determine content organization strategy
+        if any(word in user_request.lower() for word in ['guide', 'step-by-step', 'how-to', 'tutorial']):
+            organization = "structured, step-by-step progression with practical implementation guides"
+        elif any(word in user_request.lower() for word in ['reference', 'encyclopedia', 'comprehensive']):
+            organization = "encyclopedic reference structure with cross-linked topics and detailed coverage"
+        else:
+            organization = "logical topic progression with interconnected concepts and practical applications"
+        
+        description = f"""🎯 **Purpose & Scope**: This knowledge base provides comprehensive coverage of {topic}, designed as a strategic content foundation for multiple publishing formats. The scope encompasses core principles, practical applications, current best practices, and emerging trends in the field.
+
+👥 **Target Audience**: Content is structured for {target_level} learners, including professionals, students, researchers, and practitioners seeking authoritative information and actionable insights in {topic}.
+
+📋 **Content Strategy**: Information is organized using {organization}, ensuring logical knowledge progression and easy navigation. Each article builds upon previous concepts while standing alone as valuable reference material.
+
+🔍 **Coverage Areas**: Key topics include fundamental concepts, practical methodologies, real-world applications, case studies, tools and technologies, best practices, common challenges and solutions, and future developments in {topic}.
+
+📚 **Content Depth**: Articles demonstrate {depth_approach}, incorporating current research, industry standards, and practical wisdom from field experts.
+
+🎪 **Use Cases**: This KB serves as source material for ebooks, blog series, educational courses, professional training materials, white papers, and marketing content. Content is designed for easy adaptation across multiple formats and audiences.
+
+💡 **Value Proposition**: Provides unique synthesis of theoretical knowledge and practical application, offering frameworks, methodologies, and insights not readily available in fragmented online resources.
+
+🔄 **Content Approach**: Evidence-based research methodology with authoritative citations, practical examples, actionable frameworks, and real-world case studies. Balance of theoretical understanding and implementation guidance."""
+        
+        return description
 
     def _extract_kb_title(self, user_request: str) -> str:
         """Extract a clean knowledge base title from the user request"""
