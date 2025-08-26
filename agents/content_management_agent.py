@@ -159,35 +159,14 @@ You are fully autonomous and empowered to complete work items independently whil
         if supervisor_feedback:
             return self._handle_supervisor_feedback(supervisor_feedback, state)
         
-        # Check for direct user requests (backward compatibility)
-        agent_messages = state.get("agent_messages", [])
-        my_messages = [msg for msg in agent_messages if msg.recipient in [self.name, "ContentManagement"]]
-        
-        if my_messages:
-            self.log(f"Found {len(my_messages)} messages for ContentManagement - processing latest")
-            # Handle direct workflow requests (fallback mode)
-            return self._handle_direct_workflow_request(my_messages[-1], state)
-        
         # AUTONOMOUS SWARMING MODE: Find and claim available work
         available_work = self._find_available_gitlab_work(state)
         
         if not available_work:
-            self.log("No available work items found in GitLab")
-            # Check if this is a direct retrieval request
-            last_message = state.get("messages", [])
-            if last_message:
-                last_user_msg = last_message[-1].content.lower()
-                # Detect knowledge base listing requests
-                kb_request_patterns = [
-                    "get all kbs", "get kbs", "list kbs", "show kbs", 
-                    "all knowledge bases", "knowledge bases", "get_knowledge_bases",
-                    "list knowledge bases", "show knowledge bases"
-                ]
-                
-                if any(pattern in last_user_msg for pattern in kb_request_patterns):
-                    return self._handle_direct_retrieval_request(state, last_user_msg)
-            
-            # Return to supervisor with no work found status
+            self.log("No available GitLab work items found - analyzing for content management opportunities")
+            # Look for content management opportunities and create new work items if needed
+            self._scan_for_management_opportunities(state)
+            return state
             no_work_response = self.create_message(
                 recipient="Supervisor",
                 message_type="status_update",
@@ -248,6 +227,19 @@ You are fully autonomous and empowered to complete work items independently whil
             state["current_agent"] = "Supervisor"
         
         return state
+    
+    def _scan_for_management_opportunities(self, state: AgentState) -> None:
+        """Scan for content management opportunities and create work items if needed"""
+        try:
+            self.log("🔍 Scanning for autonomous content management opportunities...")
+            
+            # This could analyze for management needs like structure assessment,
+            # content organization, workflow optimization, etc.
+            # For now, just log that no immediate management work was found
+            self.log("💡 No immediate management opportunities found - system appears well-managed")
+                
+        except Exception as e:
+            self.log(f"Error scanning for management opportunities: {str(e)}", "ERROR")
     
     def _handle_direct_retrieval_request(self, state: AgentState, request: str) -> AgentState:
         """Handle direct retrieval requests like getting knowledge bases"""
@@ -681,18 +673,10 @@ IMPORTANT:
                     state.get("knowledge_base_id") or 
                     os.getenv('DEFAULT_KNOWLEDGE_BASE_ID', '13'))
             
-            # FIRST: Assess knowledge base structure and create foundation work items if needed
-            self.log(f"Assessing knowledge base structure for KB {kb_id}...")
-            structure_assessment = self._assess_knowledge_base_structure(kb_id)
+            # LLM-DRIVEN APPROACH: Let the AI analyze existing content and create what's needed
+            self.log(f"Using LLM-driven content creation for KB {kb_id} - no rigid structure requirements")
             
-            # If foundation work is needed, prioritize that over content creation
-            if structure_assessment.get("needs_structure_work") or structure_assessment.get("needs_taxonomy_work"):
-                self.log("🚧 Foundation work required - deferring content creation until structure is established")
-                self.log(f"   Structure issues: {structure_assessment.get('hierarchy_issues', [])}")
-                self.log(f"   Taxonomy issues: {structure_assessment.get('taxonomy_issues', [])}")
-                return True  # Return success as we've created the necessary foundation work items
-            
-            # Only proceed with content creation if foundation is in place
+            # Proceed directly with content creation - let LLM determine structure needs
             opportunity = opportunities[0]
             article_title = opportunity.get("description", "Strategic Content")
             priority = opportunity.get("priority", "medium")

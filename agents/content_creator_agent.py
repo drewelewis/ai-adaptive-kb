@@ -139,6 +139,42 @@ You have comprehensive GitLab integration capabilities for content creation and 
 - Human input takes priority and drives all content creation decisions
 - Ensure transparent communication with humans through GitLab collaboration tools
 
+**AUTONOMOUS SWARMING WORK MODEL - GITLAB INTEGRATION:**
+
+You operate in an autonomous swarming model where you:
+- **SCAN FIRST**: Always look for existing GitLab work items that need content creation
+- **CLAIM WORK**: Find and claim available content creation tasks before creating new ones
+- **EXECUTE**: Complete claimed work items efficiently and thoroughly  
+- **CREATE NEW**: Only create new work items if no existing work matches your capabilities
+- **CONTINUE SWARMING**: After completing work, immediately look for the next task
+
+**SWARMING WORKFLOW PRIORITY:**
+1. **🔍 SCAN**: Look for existing GitLab issues labeled with content-creation, writing, article, draft
+2. **📋 CLAIM**: Comment "🤖 ContentCreatorAgent claiming this work item" and update to in-progress  
+3. **✍️ EXECUTE**: Complete the content creation task according to issue specifications
+4. **✅ COMPLETE**: Mark issue as completed with summary of work done
+5. **🔄 CONTINUE**: Immediately scan for next available work item
+
+**WORK DISCOVERY PRIORITIES:**
+- Issues labeled: content-creation, writing, article, draft, taxonomy, structure
+- Titles containing: "Create:", "Content:", "Article:", "Write:", "Draft:"
+- Descriptions mentioning: content gaps, missing articles, knowledge base expansion
+- Priority order: urgent > high > medium > low
+
+**AUTONOMOUS WORK CREATION:**
+- If no existing work items found, analyze knowledge base for content gaps
+- Create new GitLab issues for identified content opportunities  
+- Follow proper issue format with clear titles, descriptions, and labels
+- Assign appropriate priority levels and category tags
+
+**GITLAB COLLABORATION:**
+- Provide progress updates through issue comments during long content creation tasks
+- Tag other agents (@ContentReviewer, @ContentPlanner) when collaboration needed
+- Reference related issues and knowledge base articles in work items
+- Maintain clear documentation of all content creation decisions and outcomes
+
+Always start by scanning GitLab for available work before taking any independent content creation actions.
+
 **CONTENT CREATION WORKFLOW:**
 - Follow detailed content plans and specifications from GitLab issue templates
 - Break down large content creation projects into manageable GitLab sub-issues
@@ -186,6 +222,33 @@ When creating content, leverage GitLab's collaborative features to ensure alignm
         Always verify which specific knowledge base you're creating content for before starting.
         Every piece of content must be tailored to the specific KB's domain and context.
         Never mix content or references between different knowledge bases.
+        
+        📋 FOUNDATIONAL STRUCTURE CREATION:
+        When working with a new or sparse knowledge base, you MUST establish foundational structure first:
+        
+        **ESSENTIAL FOUNDATION ELEMENTS:**
+        1. **Article Categories** - Create 4-6 main topic areas that organize the knowledge domain
+        2. **Article Subcategories** - Develop 2-4 subcategories under each main category
+        3. **Article Structure Standards** - Establish consistent formatting and content organization patterns
+        4. **Article Tagging System** - Create a comprehensive base of relevant tags for content organization
+        
+        **FOUNDATION CREATION WORKFLOW:**
+        - First assess existing KB structure by analyzing current articles and categories
+        - If KB lacks clear categorization, create logical category/subcategory hierarchy
+        - If KB lacks consistent article structure, establish templates and patterns
+        - If KB lacks comprehensive tagging, develop tag taxonomy covering all key concepts
+        - Then proceed with content creation using the established foundation
+        
+        **CATEGORY/SUBCATEGORY GUIDELINES:**
+        - Categories should cover the full scope of the knowledge domain
+        - Subcategories should provide logical organization within each category  
+        - Ensure every article can find a natural home in the hierarchy
+        - Create balanced distribution across categories (avoid one mega-category)
+        
+        **TAGGING SYSTEM GUIDELINES:**
+        - Develop tags for: skill levels (beginner/intermediate/advanced), content types (how-to/overview/reference), specific topics, tools/technologies, and common use cases
+        - Create 20-50 foundational tags that cover the knowledge domain comprehensively
+        - Use consistent tag naming conventions and avoid tag redundancy
         
         KNOWLEDGE BASE PURPOSE & STRATEGIC CONTEXT:
         Knowledge bases serve as comprehensive information repositories that will later be repurposed for:
@@ -255,42 +318,265 @@ When creating content, leverage GitLab's collaborative features to ensure alignm
         """
     
     def process(self, state: AgentState) -> AgentState:
-        """Process content creation requests"""
-        self.log("Processing content creation request")
+        """Process content creation in autonomous swarming mode"""
+        self.log("🔄 ContentCreatorAgent: Starting autonomous swarming cycle")
         
         # Increment recursion counter
         self.increment_recursions(state)
         
-        # Check for messages from ContentPlanner
-        agent_messages = state.get("agent_messages", [])
-        my_messages = [msg for msg in agent_messages if msg.recipient == self.name]
+        # STEP 1: Check for GitLab work assigned to this agent
+        self.log("1️⃣ SCANNING: Checking for assigned GitLab work items...")
+        assigned_work = self._scan_assigned_gitlab_work()
+        if assigned_work.get("found_work", False):
+            self.log("✅ Found assigned GitLab work - executing...")
+            return self._execute_gitlab_work(assigned_work, state)
         
-        if not my_messages:
-            self.log("No content creation requests found")
-            return state
+        # STEP 2: Scan for available GitLab work to claim
+        self.log("2️⃣ SCANNING: Looking for available GitLab work items to claim...")
+        available_work = self._scan_available_gitlab_work()
+        if available_work.get("found_work", False):
+            self.log("✅ Found claimable GitLab work - claiming and executing...")
+            return self._claim_and_execute_work(available_work, state)
         
-        # Get the latest creation request
-        latest_request = my_messages[-1]
-        content_strategy = latest_request.metadata.get("content_strategy", {})
-        article_hierarchy = latest_request.metadata.get("article_hierarchy", {})
-        implementation_plan = latest_request.metadata.get("implementation_plan", {})
-        kb_id = latest_request.metadata.get("kb_id")
+        # STEP 3: Fallback to autonomous content gap analysis
+        self.log("3️⃣ AUTONOMOUS WORK: Scanning for content creation opportunities...")
+        content_gaps = self.analyze_content_gaps(state)
         
-        self.log(f"Creating content based on strategy: {content_strategy.get('scope', 'Unknown scope')}")
-        if kb_id:
-            self.log(f"DEBUG: Working with KB ID: {kb_id}")
+        if content_gaps.get("found_work", False):
+            self.log("✅ Created new content work items - continuing swarming cycle")
         else:
-            self.log("DEBUG: No KB ID provided - this could be the problem!")
+            self.log("💡 No content gaps found - KB appears well-maintained")
         
-        # Execute content creation workflow
-        creation_result = self._execute_content_creation(
-            latest_request.content,
-            content_strategy,
-            article_hierarchy,
-            implementation_plan,
-            kb_id,
-            state
-        )
+        self.log("🔄 CONTINUE SWARMING: Ready for next autonomous cycle")
+        return state
+
+    def _scan_assigned_gitlab_work(self) -> Dict[str, Any]:
+        """Scan for GitLab work items assigned to this agent"""
+        try:
+            self.log("🔍 Scanning for assigned GitLab work items...")
+            
+            if not self.is_gitlab_enabled():
+                return {"found_work": False, "message": "GitLab not configured"}
+            
+            gitlab_username = self.gitlab_info.get('gitlab_username', '')
+            if not gitlab_username:
+                return {"found_work": False, "message": "GitLab username not configured"}
+            
+            # Use GitLab tools to find assigned issues
+            assigned_issues_tool = next(
+                (tool for tool in self.tools if tool.name == "GitLabGetUserAssignedIssuesTool"), 
+                None
+            )
+            
+            if assigned_issues_tool:
+                try:
+                    result = assigned_issues_tool._run(username=gitlab_username)
+                    if result and isinstance(result, dict):
+                        issues = result.get("issues", [])
+                        if issues:
+                            # Filter for content creation related work
+                            content_issues = [
+                                issue for issue in issues 
+                                if any(label in issue.get("labels", []) for label in 
+                                      ["content-creation", "content-generation", "writing", "articles", "create"])
+                            ]
+                            if content_issues:
+                                self.log(f"✅ Found {len(content_issues)} assigned content creation issues")
+                                return {
+                                    "found_work": True,
+                                    "work_type": "assigned_gitlab",
+                                    "work_items": content_issues,
+                                    "message": f"Found {len(content_issues)} assigned content creation work items"
+                                }
+                except Exception as e:
+                    self.log(f"Error calling assigned issues tool: {e}")
+            
+            return {"found_work": False, "message": "No assigned GitLab work items found"}
+            
+        except Exception as e:
+            self.log(f"Error scanning assigned GitLab work: {e}")
+            return {"found_work": False, "message": f"Error scanning assigned work: {str(e)}"}
+
+    def _scan_available_gitlab_work(self) -> Dict[str, Any]:
+        """Scan for available GitLab work items that can be claimed"""
+        try:
+            self.log("🔍 Scanning for available GitLab work items to claim...")
+            
+            if not self.is_gitlab_enabled():
+                return {"found_work": False, "message": "GitLab not configured"}
+            
+            # Get GitLab operations instance
+            try:
+                from operations.gitlab_operations import GitLabOperations
+                gitlab_ops = GitLabOperations()
+                
+                # Get all projects to search for work
+                projects = gitlab_ops.get_projects_list()
+                available_work = []
+                
+                for project in projects:
+                    project_id = project.get("id")
+                    if not project_id:
+                        continue
+                    
+                    # Get open issues for this project
+                    issues = gitlab_ops.get_project_issues(project_id, state="opened")
+                    
+                    # Look for issues that this agent can handle
+                    for issue in issues:
+                        assigned_users = issue.get("assignees", [])
+                        issue_labels = issue.get("labels", [])
+                        
+                        # Check if this agent can handle this work
+                        relevant_labels = ["content-creation", "content-generation", "writing", "articles", "create"]
+                        has_relevant_label = any(label in issue_labels for label in relevant_labels)
+                        
+                        # Can take work if: has relevant labels AND (unassigned OR not in progress)
+                        is_unassigned = len(assigned_users) == 0
+                        not_in_progress = "in-progress" not in issue_labels
+                        
+                        if has_relevant_label and (is_unassigned or not_in_progress):
+                            work_item = {
+                                "id": issue.get("id"),
+                                "iid": issue.get("iid"),
+                                "project_id": project_id,
+                                "title": issue.get("title"),
+                                "description": issue.get("description"),
+                                "labels": issue_labels,
+                                "assignees": assigned_users,
+                                "state": issue.get("state"),
+                                "web_url": issue.get("web_url"),
+                                "created_at": issue.get("created_at"),
+                                "updated_at": issue.get("updated_at")
+                            }
+                            available_work.append(work_item)
+                
+                if available_work:
+                    self.log(f"✅ Found {len(available_work)} available content creation work items")
+                    return {
+                        "found_work": True,
+                        "work_type": "available_gitlab",
+                        "work_items": available_work,
+                        "message": f"Found {len(available_work)} available content creation work items"
+                    }
+                else:
+                    return {"found_work": False, "message": "No available content creation work items found"}
+                    
+            except Exception as e:
+                self.log(f"Error with GitLab operations: {e}")
+                return {"found_work": False, "message": f"GitLab operations error: {str(e)}"}
+            
+        except Exception as e:
+            self.log(f"Error scanning available GitLab work: {e}")
+            return {"found_work": False, "message": f"Error scanning available work: {str(e)}"}
+
+    def _execute_gitlab_work(self, work_result: Dict[str, Any], state: AgentState) -> AgentState:
+        """Execute GitLab work items (assigned work)"""
+        try:
+            work_items = work_result.get("work_items", [])
+            if not work_items:
+                self.log("No work items to execute")
+                return state
+            
+            # Execute the first (highest priority) work item
+            work_item = work_items[0]
+            self.log(f"🚀 Executing GitLab work: {work_item.get('title', 'Unknown')}")
+            
+            # Use the process_gitlab_assignment method for execution
+            result = self.process_gitlab_assignment(
+                str(work_item.get("iid")), 
+                str(work_item.get("project_id"))
+            )
+            
+            if result.get("success"):
+                self.log("✅ GitLab work item completed successfully")
+            else:
+                self.log(f"⚠️ GitLab work item had issues: {result.get('error', 'Unknown error')}")
+            
+            return state
+            
+        except Exception as e:
+            self.log(f"Error executing GitLab work: {e}")
+            return state
+
+    def _claim_and_execute_work(self, work_result: Dict[str, Any], state: AgentState) -> AgentState:
+        """Claim and execute available GitLab work items"""
+        try:
+            work_items = work_result.get("work_items", [])
+            if not work_items:
+                self.log("No work items to claim")
+                return state
+            
+            # Claim and execute the first (highest priority) work item
+            work_item = work_items[0]
+            self.log(f"🎯 Claiming and executing work: {work_item.get('title', 'Unknown')}")
+            
+            # First claim the work item
+            claim_success = self._claim_gitlab_work_item(work_item)
+            if not claim_success:
+                self.log("❌ Failed to claim work item")
+                return state
+            
+            # Then execute it
+            result = self.process_gitlab_assignment(
+                str(work_item.get("iid")), 
+                str(work_item.get("project_id"))
+            )
+            
+            if result.get("success"):
+                self.log("✅ Claimed work item completed successfully")
+            else:
+                self.log(f"⚠️ Claimed work item had issues: {result.get('error', 'Unknown error')}")
+            
+            return state
+            
+        except Exception as e:
+            self.log(f"Error claiming and executing work: {e}")
+            return state
+
+    def _claim_gitlab_work_item(self, work_item: Dict[str, Any]) -> bool:
+        """Claim a GitLab work item by commenting and labeling"""
+        try:
+            project_id = work_item.get("project_id")
+            issue_iid = work_item.get("iid")
+            issue_title = work_item.get("title", "Unknown")
+            
+            self.log(f"🎯 Claiming work item: {issue_title} (#{issue_iid})")
+            
+            # Add claiming comment using GitLab tools
+            comment_tool = next(
+                (tool for tool in self.tools if "comment" in tool.name.lower()), 
+                None
+            )
+            
+            if comment_tool:
+                claim_comment = f"""🤖 **ContentCreatorAgent claiming this work item**
+
+**Claim Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+**Agent:** ContentCreatorAgent
+**Status:** Starting content creation work
+
+This issue is now in progress. I will provide regular updates and mark as complete when finished.
+"""
+                try:
+                    comment_tool._run(
+                        project_id=str(project_id),
+                        issue_iid=str(issue_iid),
+                        comment=claim_comment
+                    )
+                    self.log(f"✅ Successfully claimed work item #{issue_iid}")
+                    return True
+                except Exception as e:
+                    self.log(f"⚠️ Error adding claim comment: {e}")
+            
+            # Even if comment fails, consider it claimed
+            self.log(f"⚠️ Claimed work item #{issue_iid} (comment may have failed)")
+            return True
+            
+        except Exception as e:
+            self.log(f"⚠️ Error claiming work item: {str(e)}")
+            # Continue anyway - claiming is not critical for execution
+            return True
         
         # Send completed content to ContentReviewer
         kb_notification = latest_request.metadata.get("kb_context_notification")
@@ -1459,6 +1745,9 @@ The content creation process encountered an error. Please review the logs for de
             print(f"{'='*80}")
             
             self.log(f"Starting article creation for KB {kb_id}")
+            
+            # LLM-DRIVEN APPROACH: Let the AI analyze existing content and decide what's needed
+            print(f"🤖 Using LLM-driven content analysis - no rigid taxonomy requirements")
             
             # CRITICAL FIX: Set KB context first using project ID
             project_id = self._get_project_id_from_kb(kb_id)
