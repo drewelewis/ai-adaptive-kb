@@ -1,5 +1,6 @@
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+import os
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 from langchain_openai import AzureChatOpenAI
 from .base_agent import BaseAgent
@@ -8,6 +9,10 @@ from tools.knowledge_base_tools import KnowledgeBaseTools
 from tools.gitlab_tools import GitLabTools
 from prompts.knowledge_base_prompts import prompts as kb_prompts
 from prompts.multi_agent_prompts import prompts as ma_prompts
+
+# Ensure environment variables are loaded for database connectivity
+from dotenv import load_dotenv
+load_dotenv(override=True)
 
 
 class ContentManagementAgent(BaseAgent):
@@ -39,6 +44,9 @@ class ContentManagementAgent(BaseAgent):
         
         # Bind tools to LLM
         self.llm_with_tools = llm.bind_tools(self.tools)
+        
+        # Track current KB context  
+        self.kb_context = {}  # Store current KB context
     
     def _get_agent_identity_prompt(self) -> str:
         """Create agent identity prompt with GitLab awareness"""
@@ -489,7 +497,7 @@ CRITICAL INSTRUCTIONS FOR CONTENT CREATION:
   * Then create sub-articles under the categories using KnowledgeBaseInsertArticle with appropriate parent_id
   * Use meaningful titles and comprehensive content for each article
   * Ensure proper hierarchical structure (categories as parent articles, topics as child articles)
-  * For "Family Finance" category example: create category first, then create articles like "Family Budgeting", "Teaching Kids About Money", etc.
+  * For example, if creating a category about a topic: create category first, then create specific articles under it
   * Always validate knowledge base context first before creating content
   * REQUIRED FIELDS for KnowledgeBaseInsertArticle tool:
     - title: Clear, descriptive title for the article/category
@@ -498,10 +506,10 @@ CRITICAL INSTRUCTIONS FOR CONTENT CREATION:
     - parent_id: Use null for main categories, or parent article ID for sub-articles
     - knowledge_base_id: Use the current knowledge base ID from state
   * DO NOT use KnowledgeBaseGetArticleHierarchy for creation - that's only for reading existing content
-  * EXAMPLE for creating "Family Finance" category:
-    article={{"title": "Family Finance", "content": "Comprehensive guide covering all aspects of family financial planning, including budgeting for families, teaching children about money, saving for family goals, and managing household finances effectively. This category includes strategies for dual-income families, single-parent financial planning, and teaching financial literacy to children of all ages.", "author_id": 1, "parent_id": null, "knowledge_base_id": 1}}
-  * EXAMPLE for creating sub-article under Family Finance:
-    article={{"title": "Family Budgeting Strategies", "content": "Effective budgeting techniques specifically designed for families, including methods for tracking family expenses, allocating funds for children's needs, planning for family activities, and managing variable family income. Topics include envelope budgeting for families, zero-based budgeting with kids, and emergency fund planning for households.", "author_id": 1, "parent_id": [Family Finance category ID], "knowledge_base_id": 1}}
+  * EXAMPLE for creating a main category:
+    article={{"title": "[Topic Category Name]", "content": "Comprehensive guide covering all aspects of [topic area], including key concepts, best practices, and practical applications. This category serves as the foundation for organizing related content and provides overview information for the topic domain.", "author_id": 1, "parent_id": null, "knowledge_base_id": [current_kb_id]}}
+  * EXAMPLE for creating sub-article under a category:
+    article={{"title": "[Specific Topic Name]", "content": "Detailed information about [specific topic], including practical techniques, step-by-step guidance, and real-world applications. This content provides actionable insights and comprehensive coverage of the subject matter.", "author_id": 1, "parent_id": [parent_category_id], "knowledge_base_id": [current_kb_id]}}
 
 CRITICAL INSTRUCTIONS FOR KNOWLEDGE BASE CONTEXT SETTING:
 - If intent is "set_knowledge_base_context":
@@ -656,7 +664,920 @@ IMPORTANT:
             }
         except Exception as e:
             raise Exception(f"Tool execution failed for {tool_name}: {str(e)}")
-    
+
+    def _execute_strategic_content_work(self, strategic_work: Dict[str, Any], state: AgentState) -> bool:
+        """Execute strategic content creation work by creating an article"""
+        try:
+            self.log("Executing strategic content creation work")
+            
+            # Extract opportunity details
+            opportunities = strategic_work.get("opportunities", [])
+            if not opportunities:
+                self.log("No opportunities provided for strategic content creation")
+                return False
+
+            # Get current KB context from environment or state
+            kb_id = (self.kb_context.get("knowledge_base_id") or 
+                    state.get("knowledge_base_id") or 
+                    os.getenv('DEFAULT_KNOWLEDGE_BASE_ID', '13'))
+            
+            # FIRST: Assess knowledge base structure and create foundation work items if needed
+            self.log(f"Assessing knowledge base structure for KB {kb_id}...")
+            structure_assessment = self._assess_knowledge_base_structure(kb_id)
+            
+            # If foundation work is needed, prioritize that over content creation
+            if structure_assessment.get("needs_structure_work") or structure_assessment.get("needs_taxonomy_work"):
+                self.log("🚧 Foundation work required - deferring content creation until structure is established")
+                self.log(f"   Structure issues: {structure_assessment.get('hierarchy_issues', [])}")
+                self.log(f"   Taxonomy issues: {structure_assessment.get('taxonomy_issues', [])}")
+                return True  # Return success as we've created the necessary foundation work items
+            
+            # Only proceed with content creation if foundation is in place
+            opportunity = opportunities[0]
+            article_title = opportunity.get("description", "Strategic Content")
+            priority = opportunity.get("priority", "medium")
+            rationale = opportunity.get("rationale", "Strategic content expansion")
+            
+            self.log(f"Creating strategic article: {article_title}")            # Find the article creation tool
+            create_tool = None
+            for tool in self.tools:
+                if tool.name == "KnowledgeBaseInsertArticle":
+                    create_tool = tool
+                    break
+            
+            if not create_tool:
+                self.log("KnowledgeBaseInsertArticle tool not found")
+                return False
+            
+            # Create comprehensive content based on the opportunity
+            content = self._generate_strategic_content(article_title, rationale)
+            
+            # Execute article creation with correct parameters
+            from models.article import Article
+            
+            article_data = Article.InsertModel(
+                title=article_title,
+                content=content,
+                author_id=1,  # AI-generated content
+                parent_id=None,  # Root level article
+                knowledge_base_id=int(kb_id)
+            )
+            
+            tool_args = {
+                "knowledge_base_id": str(kb_id),
+                "article": article_data
+            }
+            
+            self.log(f"Calling KnowledgeBaseInsertArticle with KB ID: {kb_id}")
+            result = create_tool._run(**tool_args)
+            
+            if result and hasattr(result, 'id') and result.id:
+                self.log(f"✅ Successfully created strategic article: {article_title} (ID: {result.id})")
+                
+                # Create GitLab work item to track completed content
+                self._create_completion_work_item(article_title, result.id, kb_id)
+                
+                return True
+            else:
+                self.log(f"❌ Failed to create strategic article: {result}")
+                return False
+                
+        except Exception as e:
+            self.log(f"Error in strategic content creation: {str(e)}")
+            return False
+
+    def _create_completion_work_item(self, article_title: str, article_id: int, kb_id: str) -> None:
+        """Create GitLab work item to track completed content creation"""
+        try:
+            from tools.gitlab_tools import GitLabTools
+            gitlab_tools = GitLabTools()
+            
+            # Find the GitLab create issue tool
+            create_issue_tool = None
+            for tool in gitlab_tools.tools():
+                if tool.name == "GitLabCreateIssueTool":
+                    create_issue_tool = tool
+                    break
+            
+            if not create_issue_tool:
+                self.log("GitLabCreateIssueTool not found for completion tracking")
+                return
+                
+            # Create work item for completed content  
+            # Get GitLab project ID from current KB context
+            project_id = (self.kb_context.get("gitlab_project_id") or 
+                         os.getenv('DEFAULT_GITLAB_PROJECT_ID', '27'))
+            
+            work_item_data = {
+                "project_id": str(project_id),
+                "title": f"✅ Content Created: {article_title}",
+                "description": f"""**Content Creation Completed**
+
+📝 **Article:** {article_title}
+🆔 **Article ID:** {article_id}  
+📚 **Knowledge Base ID:** {kb_id}
+🤖 **Created by:** ContentManagementAgent (Autonomous)
+📅 **Created:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+**Status:** Content successfully generated and inserted into knowledge base.
+**Next Steps:** Ready for review and quality assurance if needed.
+""",
+                "labels": ["content-completed", "autonomous-work", "strategic-content"]
+            }
+            
+            result = self._create_issue(project_id, work_item_data["title"], work_item_data["description"], work_item_data["labels"])
+            if result:
+                self.log(f"📝 Created completion work item for: {article_title}")
+            else:
+                self.log(f"🔄 Completion work item already exists for: {article_title}")
+            
+        except Exception as e:
+            self.log(f"Warning: Could not create completion work item: {str(e)}")
+
+    def _assess_knowledge_base_structure(self, kb_id: str) -> Dict[str, Any]:
+        """Assess knowledge base structure and create foundation work items if needed"""
+        try:
+            assessment = {
+                "has_proper_hierarchy": False,
+                "has_taxonomy_tags": False,
+                "needs_structure_work": False,
+                "needs_taxonomy_work": False,
+                "hierarchy_issues": [],
+                "taxonomy_issues": []
+            }
+            
+            # Check article hierarchy using KnowledgeBaseValidateHierarchy tool
+            hierarchy_tool = None
+            tags_tool = None
+            
+            for tool in self.tools:
+                if tool.name == "KnowledgeBaseValidateHierarchy":
+                    hierarchy_tool = tool
+                elif tool.name == "KnowledgeBaseGetTagsByKnowledgeBase":
+                    tags_tool = tool
+            
+            # Assess hierarchy structure
+            if hierarchy_tool:
+                try:
+                    hierarchy_result = hierarchy_tool._run(knowledge_base_id=kb_id)
+                    
+                    # Parse hierarchy validation results
+                    if isinstance(hierarchy_result, str):
+                        if "✅ VALID HIERARCHY" in hierarchy_result:
+                            assessment["has_proper_hierarchy"] = True
+                        else:
+                            assessment["needs_structure_work"] = True
+                            if "No root categories found" in hierarchy_result:
+                                assessment["hierarchy_issues"].append("missing_root_categories")
+                            if "subcategories" in hierarchy_result.lower():
+                                assessment["hierarchy_issues"].append("missing_subcategories")
+                            if "articles" in hierarchy_result.lower():
+                                assessment["hierarchy_issues"].append("missing_article_structure")
+                    
+                except Exception as e:
+                    self.log(f"Could not assess hierarchy: {str(e)}")
+                    assessment["needs_structure_work"] = True
+                    assessment["hierarchy_issues"].append("assessment_failed")
+            
+            # Assess taxonomy/tagging structure
+            if tags_tool:
+                try:
+                    tags_result = tags_tool._run(knowledge_base_id=kb_id)
+                    
+                    if isinstance(tags_result, list) and len(tags_result) > 0:
+                        assessment["has_taxonomy_tags"] = True
+                        self.log(f"Found {len(tags_result)} existing tags")
+                    else:
+                        assessment["needs_taxonomy_work"] = True
+                        assessment["taxonomy_issues"].append("no_tags_found")
+                        
+                except Exception as e:
+                    self.log(f"Could not assess tags: {str(e)}")
+                    assessment["needs_taxonomy_work"] = True
+                    assessment["taxonomy_issues"].append("assessment_failed")
+            
+            # Create work items for missing foundation elements (only if not already created)
+            if assessment["needs_structure_work"]:
+                if not self._work_item_exists_by_title("🏗️ [FOUNDATION] Establish Knowledge Base Structure"):
+                    self._create_structure_foundation_work_item(kb_id, assessment["hierarchy_issues"])
+                else:
+                    self.log("🔄 Structure foundation work item already exists - skipping creation")
+            
+            if assessment["needs_taxonomy_work"]:
+                if not self._work_item_exists_by_title("🏷️ [FOUNDATION] Establish Taxonomy & Tagging System"):
+                    self._create_taxonomy_foundation_work_item(kb_id, assessment["taxonomy_issues"])
+                else:
+                    self.log("🔄 Taxonomy foundation work item already exists - skipping creation")
+            
+            return assessment
+            
+        except Exception as e:
+            self.log(f"Error assessing knowledge base structure: {str(e)}")
+            return {"error": str(e)}
+
+    def _structure_work_item_exists(self, kb_id: str) -> bool:
+        """Check if structure foundation work item already exists for this KB"""
+        try:
+            self.log(f"🔍 Checking for existing structure work items in project...")
+            
+            from tools.gitlab_tools import GitLabTools
+            gitlab_tools = GitLabTools()
+            
+            # Find the GitLab list issues tool
+            list_issues_tool = None
+            for tool in gitlab_tools.tools():
+                if tool.name == "GitLabListIssuesTool":
+                    list_issues_tool = tool
+                    break
+            
+            if not list_issues_tool:
+                self.log("⚠️ GitLabListIssuesTool not found - cannot check existing work items")
+                return False
+                
+            # Get GitLab project ID from current KB context
+            project_id = (self.kb_context.get("gitlab_project_id") or 
+                         os.getenv('DEFAULT_GITLAB_PROJECT_ID', '164'))
+            
+            self.log(f"🔍 Searching project {project_id} for existing structure foundation work items...")
+            
+            # Search for structure foundation work items
+            issues_result = list_issues_tool._run(
+                project_id=project_id,
+                state="opened",
+                search="🏗️ [FOUNDATION] Establish Knowledge Base Structure"
+            )
+            
+            self.log(f"🔍 Search returned: {type(issues_result)} with {len(issues_result) if isinstance(issues_result, list) else 'unknown'} results")
+            
+            if isinstance(issues_result, list):
+                if len(issues_result) > 0:
+                    self.log(f"✅ Found {len(issues_result)} existing structure foundation work items - skipping creation")
+                    # Log the existing items for verification
+                    for i, issue in enumerate(issues_result[:3]):  # Show first 3
+                        if isinstance(issue, dict):
+                            title = issue.get("title", "No title")
+                            issue_id = issue.get("iid", "No ID")
+                            self.log(f"   📋 Existing item #{issue_id}: {title}")
+                    return True
+                else:
+                    self.log("ℹ️ No existing structure foundation work items found")
+                    return False
+            else:
+                self.log(f"⚠️ Unexpected search result type: {type(issues_result)}")
+                return False
+            
+        except Exception as e:
+            self.log(f"❌ Error checking for existing structure work item: {str(e)}")
+            # Return False to be safe - better to potentially create duplicate than miss required work
+            return False
+
+    def _taxonomy_work_item_exists(self, kb_id: str) -> bool:
+        """Check if taxonomy foundation work item already exists for this KB"""
+        try:
+            self.log(f"🔍 Checking for existing taxonomy work items in project...")
+            
+            from tools.gitlab_tools import GitLabTools
+            gitlab_tools = GitLabTools()
+            
+            # Find the GitLab list issues tool
+            list_issues_tool = None
+            for tool in gitlab_tools.tools():
+                if tool.name == "GitLabListIssuesTool":
+                    list_issues_tool = tool
+                    break
+            
+            if not list_issues_tool:
+                self.log("⚠️ GitLabListIssuesTool not found - cannot check existing work items")
+                return False
+                
+            # Get GitLab project ID from current KB context
+            project_id = (self.kb_context.get("gitlab_project_id") or 
+                         os.getenv('DEFAULT_GITLAB_PROJECT_ID', '164'))
+            
+            self.log(f"🔍 Searching project {project_id} for existing taxonomy foundation work items...")
+            
+            # Search for taxonomy foundation work items
+            issues_result = list_issues_tool._run(
+                project_id=project_id,
+                state="opened",
+                search="🏷️ [FOUNDATION] Establish Taxonomy & Tagging System"
+            )
+            
+            self.log(f"🔍 Search returned: {type(issues_result)} with {len(issues_result) if isinstance(issues_result, list) else 'unknown'} results")
+            
+            if isinstance(issues_result, list):
+                if len(issues_result) > 0:
+                    self.log(f"✅ Found {len(issues_result)} existing taxonomy foundation work items - skipping creation")
+                    # Log the existing items for verification
+                    for i, issue in enumerate(issues_result[:3]):  # Show first 3
+                        if isinstance(issue, dict):
+                            title = issue.get("title", "No title")
+                            issue_id = issue.get("iid", "No ID")
+                            self.log(f"   📋 Existing item #{issue_id}: {title}")
+                    return True
+                else:
+                    self.log("ℹ️ No existing taxonomy foundation work items found")
+                    return False
+            else:
+                self.log(f"⚠️ Unexpected search result type: {type(issues_result)}")
+                return False
+            
+        except Exception as e:
+            self.log(f"❌ Error checking for existing taxonomy work item: {str(e)}")
+            # Return False to be safe - better to potentially create duplicate than miss required work
+            return False
+
+    def _work_item_exists_by_title(self, title_search: str, project_id: str = None) -> bool:
+        """Check if a work item with exact title already exists using GitLabOperations"""
+        try:
+            self.log(f"🔍 Checking for existing work items with exact title: '{title_search}'")
+            
+            # Import the existing GitLab operations
+            from operations.gitlab_operations import GitLabOperations
+            
+            # Use provided project_id or get from context
+            if not project_id:
+                project_id = (self.kb_context.get("gitlab_project_id") or 
+                             os.getenv('DEFAULT_GITLAB_PROJECT_ID', '164'))
+            
+            self.log(f"🔍 Searching project {project_id} for exact title match...")
+            
+            # Use the existing GitLabOperations for duplicate detection
+            gitlab_ops = GitLabOperations()
+            duplicate_exists = gitlab_ops.check_duplicate_issue(project_id, title_search)
+            
+            if duplicate_exists:
+                self.log(f"🔄 Duplicate detected! Work item already exists with title: '{title_search}'")
+                return True
+            else:
+                self.log(f"✅ No duplicates found - safe to create new work item")
+                return False
+            
+        except Exception as e:
+            self.log(f"❌ Error checking for existing work items: {str(e)}")
+            # Return False to be safe - better to potentially create duplicate than miss required work
+            return False
+
+    def _create_structure_foundation_work_item(self, kb_id: str, issues: List[str]) -> None:
+        """Create GitLab work item for establishing proper knowledge base structure"""
+        try:
+            from tools.gitlab_tools import GitLabTools
+            gitlab_tools = GitLabTools()
+            
+            # Find the GitLab create issue tool
+            create_issue_tool = None
+            for tool in gitlab_tools.tools():
+                if tool.name == "GitLabCreateIssueTool":
+                    create_issue_tool = tool
+                    break
+            
+            if not create_issue_tool:
+                self.log("GitLabCreateIssueTool not found for structure work item")
+                return
+                
+            # Get GitLab project ID from current KB context
+            project_id = (self.kb_context.get("gitlab_project_id") or 
+                         os.getenv('DEFAULT_GITLAB_PROJECT_ID', '27'))
+            
+            # Get KB name and description for topic analysis
+            kb_name = self.kb_context.get("knowledge_base_name", "Unknown Knowledge Base")
+            kb_description = self.kb_context.get("description", "")
+            
+            # Analyze topic complexity and generate intelligent structure recommendations
+            structure_analysis = self._analyze_topic_complexity(kb_name, kb_description)
+            
+            issues_description = ""
+            if "missing_root_categories" in issues:
+                issues_description += "• No root-level categories found\n"
+            if "missing_subcategories" in issues:
+                issues_description += "• Insufficient subcategory structure\n"
+            if "missing_article_structure" in issues:
+                issues_description += "• Articles not properly organized under categories\n"
+            if "assessment_failed" in issues:
+                issues_description += "• Could not properly assess current structure\n"
+            
+            work_item_data = {
+                "project_id": str(project_id),
+                "title": f"🏗️ [FOUNDATION] Establish Knowledge Base Structure",
+                "description": f"""**PRIORITY: Foundation Work Required**
+
+🎯 **Objective:** Establish proper hierarchical structure tailored to topic complexity
+
+**🔍 Structure Issues Identified:**
+{issues_description}
+
+**� TOPIC COMPLEXITY ANALYSIS:**
+{structure_analysis['complexity_assessment']}
+
+**🏗️ RECOMMENDED STRUCTURE FOR THIS TOPIC:**
+{structure_analysis['structure_recommendations']}
+
+**📋 SPECIFIC IMPLEMENTATION REQUIREMENTS:**
+{structure_analysis['implementation_guide']}
+
+**✅ Acceptance Criteria:**
+- [ ] Create {structure_analysis['root_category_count']} root-level categories covering the complete domain scope
+- [ ] Under each root category, create {structure_analysis['subcategory_range']} subcategories for logical subdivision
+- [ ] Implement {structure_analysis['hierarchy_depth']} level hierarchy structure minimum
+- [ ] Ensure balanced content distribution across all categories
+- [ ] Validate hierarchy meets complexity requirements using KnowledgeBaseValidateHierarchy tool
+- [ ] Document the rationale for the chosen structure in the root category descriptions
+
+**🧠 STRATEGIC CONSIDERATIONS:**
+{structure_analysis['strategic_notes']}
+
+**🤖 Agent Instructions:**
+This is FOUNDATION work that must be completed before general content creation. The structure should reflect the topic's natural complexity and scope.
+
+**⚠️ CRITICAL:** Do NOT create individual content articles until this comprehensive structure is in place and validated.
+""",
+                "labels": ["foundation-work", "structure-required", "high-priority", "knowledge-architecture", structure_analysis['complexity_label']]
+            }
+            
+            # Use centralized issue creation with duplicate detection
+            title = "🏗️ [FOUNDATION] Establish Knowledge Base Structure"
+            labels = ["foundation-work", "structure-required", "high-priority", "knowledge-architecture", structure_analysis['complexity_label']]
+            
+            result = self._create_issue(project_id, title, work_item_data["description"], labels)
+            
+            if result:
+                self.log(f"🏗️ Created structure foundation work item for KB {kb_id}")
+            else:
+                self.log(f"🔄 Structure foundation work item already exists - skipped creation")
+            
+        except Exception as e:
+            self.log(f"Warning: Could not create structure foundation work item: {str(e)}")
+
+    def _analyze_topic_complexity(self, kb_name: str, kb_description: str) -> Dict[str, Any]:
+        """Analyze topic complexity and generate intelligent structure recommendations"""
+        try:
+            # Combine name and description for analysis
+            full_topic = f"{kb_name}. {kb_description}".lower()
+            
+            # Define complexity indicators and topic patterns
+            complexity_indicators = {
+                'high_complexity': [
+                    'financial', 'finance', 'investment', 'business', 'enterprise', 'comprehensive',
+                    'professional', 'advanced', 'complete guide', 'mastery', 'expert',
+                    'healthcare', 'medical', 'legal', 'law', 'technology', 'engineering',
+                    'marketing', 'sales', 'management', 'leadership', 'strategy', 'operations'
+                ],
+                'broad_scope': [
+                    'family', 'personal', 'complete', 'comprehensive', 'everything', 'all about',
+                    'ultimate', 'total', 'entire', 'whole', 'full spectrum', 'end-to-end'
+                ],
+                'specialized_domain': [
+                    'specific', 'specialized', 'focused', 'targeted', 'niche', 'particular',
+                    'dedicated', 'exclusive', 'concentrated'
+                ]
+            }
+            
+            # Calculate complexity scores
+            high_complexity_score = sum(1 for indicator in complexity_indicators['high_complexity'] if indicator in full_topic)
+            broad_scope_score = sum(1 for indicator in complexity_indicators['broad_scope'] if indicator in full_topic)
+            specialized_score = sum(1 for indicator in complexity_indicators['specialized_domain'] if indicator in full_topic)
+            
+            # Determine topic characteristics
+            is_financial_topic = any(term in full_topic for term in ['financial', 'finance', 'money', 'investment', 'budget', 'tax', 'wealth', 'income', 'debt', 'saving'])
+            is_business_topic = any(term in full_topic for term in ['business', 'marketing', 'sales', 'management', 'strategy', 'operations', 'enterprise'])
+            is_technical_topic = any(term in full_topic for term in ['technology', 'technical', 'engineering', 'software', 'development', 'programming'])
+            is_healthcare_topic = any(term in full_topic for term in ['health', 'medical', 'wellness', 'fitness', 'nutrition'])
+            is_family_topic = any(term in full_topic for term in ['family', 'parenting', 'children', 'home', 'household'])
+            
+            # Generate structure recommendations based on analysis
+            if high_complexity_score >= 3 or broad_scope_score >= 2:
+                # High complexity topics need extensive structure
+                complexity_level = "HIGH"
+                root_category_count = "6-10"
+                subcategory_range = "4-8"
+                hierarchy_depth = "4+"
+                complexity_label = "complex-topic"
+                
+                if is_financial_topic:
+                    structure_recommendations = """
+**FINANCIAL DOMAIN STRUCTURE (Comprehensive):**
+
+**Level 1 - Financial Planning Domains (6-8 categories):**
+- Personal Financial Management
+- Investment Strategies & Planning  
+- Tax Planning & Optimization
+- Retirement & Long-term Planning
+- Risk Management & Insurance
+- Estate Planning & Wealth Transfer
+- Business Financial Strategies
+- Economic Environment & Adaptation
+
+**Level 2 - Specialized Areas (4-6 per domain):**
+- Under Personal Financial Management: Budgeting, Debt Management, Emergency Funds, Cash Flow Planning
+- Under Investment Strategies: Asset Allocation, Portfolio Management, Market Analysis, Alternative Investments
+- Under Tax Planning: Deductions & Credits, Tax-Advantaged Accounts, Business Taxes, Estate Tax Planning
+
+**Level 3+ - Specific Topics & Guides:**
+- Detailed implementation guides, strategies, tools, and case studies"""
+
+                elif is_business_topic:
+                    structure_recommendations = """
+**BUSINESS DOMAIN STRUCTURE (Comprehensive):**
+
+**Level 1 - Business Function Areas (6-8 categories):**
+- Strategic Planning & Vision
+- Operations & Process Management
+- Marketing & Customer Acquisition
+- Sales & Revenue Generation
+- Financial Management & Analytics
+- Human Resources & Team Building
+- Technology & Digital Transformation
+- Risk Management & Compliance
+
+**Level 2 - Functional Specializations (4-6 per area):**
+- Under Marketing: Digital Marketing, Content Strategy, Brand Management, Customer Research
+- Under Operations: Process Optimization, Supply Chain, Quality Management, Project Management
+- Under Financial Management: Budgeting, Forecasting, Cost Management, Investment Analysis
+
+**Level 3+ - Implementation Guides:**
+- Specific methodologies, tools, templates, and best practices"""
+
+                else:
+                    structure_recommendations = f"""
+**COMPREHENSIVE DOMAIN STRUCTURE:**
+
+**Level 1 - Primary Knowledge Domains (6-8 categories):**
+- Foundation & Core Concepts
+- Planning & Strategy
+- Implementation & Execution
+- Advanced Techniques & Methods
+- Tools & Resources
+- Troubleshooting & Problem Solving
+- Industry Standards & Best Practices
+- Future Trends & Innovation
+
+**Level 2 - Specialized Focus Areas (4-6 per domain):**
+- Each primary domain should be subdivided into logical, coherent focus areas
+- Focus areas should cover the complete scope within each domain
+- Maintain parallel structure across domains where applicable
+
+**Level 3+ - Detailed Content:**
+- Specific guides, tutorials, case studies, and reference materials"""
+
+            elif high_complexity_score >= 1 or broad_scope_score >= 1:
+                # Medium complexity topics
+                complexity_level = "MEDIUM"
+                root_category_count = "4-6"
+                subcategory_range = "3-5"
+                hierarchy_depth = "3-4"
+                complexity_label = "medium-complexity"
+                
+                structure_recommendations = f"""
+**STRUCTURED DOMAIN APPROACH:**
+
+**Level 1 - Core Knowledge Areas (4-6 categories):**
+- Fundamentals & Getting Started
+- Planning & Preparation 
+- Implementation & Application
+- Advanced Topics & Optimization
+- Resources & Tools
+- {f"Special Focus: {kb_name.split(' ')[0]} Applications" if len(kb_name.split()) > 1 else "Specialized Applications"}
+
+**Level 2 - Topic Subdivisions (3-5 per area):**
+- Each core area should have logical subdivisions based on progression or specialization
+- Balance between comprehensive coverage and manageable organization
+- Consider user journey from beginner to advanced
+
+**Level 3+ - Actionable Content:**
+- Step-by-step guides, detailed explanations, examples, and practical applications"""
+
+            else:
+                # Lower complexity topics
+                complexity_level = "FOCUSED"
+                root_category_count = "3-5"
+                subcategory_range = "2-4"
+                hierarchy_depth = "3"
+                complexity_label = "focused-topic"
+                
+                structure_recommendations = f"""
+**FOCUSED DOMAIN STRUCTURE:**
+
+**Level 1 - Essential Knowledge Areas (3-5 categories):**
+- Core Concepts & Fundamentals
+- Practical Application & Implementation
+- Advanced Techniques & Tips
+- Resources & Support
+- {f"Specialized {kb_name.split(' ')[0]} Topics" if len(kb_name.split()) > 1 else "Specialized Topics"}
+
+**Level 2 - Organized Topics (2-4 per area):**
+- Clear, logical subdivision of each essential area
+- Progressive difficulty or thematic organization
+- Ensure comprehensive coverage within focused scope
+
+**Level 3+ - Detailed Guides:**
+- In-depth articles, how-to guides, examples, and reference materials"""
+
+            # Generate complexity assessment text
+            complexity_assessment = f"""
+**Complexity Level:** {complexity_level}
+**Topic Scope:** {"Broad & Comprehensive" if broad_scope_score >= 2 else "Moderately Broad" if broad_scope_score >= 1 else "Focused"}
+**Domain Specialization:** {"Highly Specialized" if specialized_score >= 2 else "Moderately Specialized" if specialized_score >= 1 else "General Audience"}
+**Recommended Structure Depth:** {hierarchy_depth} levels minimum"""
+
+            # Generate implementation guide
+            implementation_guide = f"""
+1. **Start with Root Categories:** Create {root_category_count} primary categories that logically divide the complete domain
+2. **Build Subcategory Framework:** Under each root, create {subcategory_range} subcategories for detailed organization
+3. **Plan Content Hierarchy:** Design {hierarchy_depth} levels minimum to accommodate topic complexity
+4. **Validate Coverage:** Ensure the structure covers 100% of the intended domain scope
+5. **Test Navigation:** Verify users can logically navigate from general to specific topics
+6. **Document Relationships:** Clearly define how categories relate and build upon each other"""
+
+            # Generate strategic notes
+            strategic_notes = f"""
+- This {complexity_level.lower()}-complexity topic requires {'extensive' if complexity_level == 'HIGH' else 'moderate' if complexity_level == 'MEDIUM' else 'streamlined'} structural planning
+- Focus on {'comprehensive coverage' if complexity_level == 'HIGH' else 'balanced organization' if complexity_level == 'MEDIUM' else 'clear, focused structure'}
+- Consider {'progressive complexity' if complexity_level != 'FOCUSED' else 'logical topic flow'} in the hierarchy design
+- Plan for {'future expansion' if complexity_level == 'HIGH' else 'scalable growth' if complexity_level == 'MEDIUM' else 'focused completeness'} within the structure
+- Ensure the structure supports both {'expert reference' if complexity_level == 'HIGH' else 'learning progression' if complexity_level == 'MEDIUM' else 'practical application'}"""
+
+            return {
+                'complexity_assessment': complexity_assessment,
+                'structure_recommendations': structure_recommendations,
+                'implementation_guide': implementation_guide,
+                'strategic_notes': strategic_notes,
+                'root_category_count': root_category_count,
+                'subcategory_range': subcategory_range,
+                'hierarchy_depth': hierarchy_depth,
+                'complexity_label': complexity_label,
+                'complexity_level': complexity_level
+            }
+            
+        except Exception as e:
+            self.log(f"Error analyzing topic complexity: {str(e)}")
+            # Return default structure if analysis fails
+            return {
+                'complexity_assessment': "Unable to assess topic complexity - using default structure",
+                'structure_recommendations': "Create 3-5 root categories with 2-4 subcategories each",
+                'implementation_guide': "1. Create root categories\n2. Add subcategories\n3. Validate structure",
+                'strategic_notes': "Follow standard 3+ level hierarchy approach",
+                'root_category_count': "3-5",
+                'subcategory_range': "2-4", 
+                'hierarchy_depth': "3",
+                'complexity_label': "standard-topic",
+                'complexity_level': "STANDARD"
+            }
+
+    def _create_taxonomy_foundation_work_item(self, kb_id: str, issues: List[str]) -> None:
+        """Create GitLab work item for establishing taxonomy and tagging system"""
+        try:
+            from tools.gitlab_tools import GitLabTools
+            gitlab_tools = GitLabTools()
+            
+            # Find the GitLab create issue tool
+            create_issue_tool = None
+            for tool in gitlab_tools.tools():
+                if tool.name == "GitLabCreateIssueTool":
+                    create_issue_tool = tool
+                    break
+            
+            if not create_issue_tool:
+                self.log("GitLabCreateIssueTool not found for taxonomy work item")
+                return
+                
+            # Get GitLab project ID from current KB context
+            project_id = (self.kb_context.get("gitlab_project_id") or 
+                         os.getenv('DEFAULT_GITLAB_PROJECT_ID', '27'))
+            
+            issues_description = ""
+            if "no_tags_found" in issues:
+                issues_description += "• No taxonomy tags currently exist\n"
+            if "assessment_failed" in issues:
+                issues_description += "• Could not properly assess current taxonomy\n"
+            
+            work_item_data = {
+                "project_id": str(project_id),
+                "title": f"🏷️ [FOUNDATION] Establish Taxonomy & Tagging System",
+                "description": f"""**PRIORITY: Foundation Work Required**
+
+🎯 **Objective:** Create comprehensive taxonomy and tagging system
+
+**🔍 Taxonomy Issues Identified:**
+{issues_description}
+
+**📋 Required Taxonomy System:**
+1. **Content Type Tags** - Article types (guide, reference, tutorial, etc.)
+2. **Topic Tags** - Subject matter classifications
+3. **Difficulty Tags** - Complexity levels (beginner, intermediate, advanced)
+4. **Audience Tags** - Target audience classifications
+5. **Status Tags** - Content lifecycle (draft, reviewed, published, archived)
+
+**✅ Acceptance Criteria:**
+- [ ] Define and create core taxonomy categories (minimum 15-20 tags)
+- [ ] Create tags for content types, topics, difficulty, and audience
+- [ ] Document tagging guidelines and conventions
+- [ ] Apply initial tags to existing content (if any)
+- [ ] Validate taxonomy completeness using KnowledgeBaseGetTagsByKnowledgeBase tool
+
+**🤖 Agent Instructions:**
+This taxonomy system will be used by all future content creation. Establish this before creating articles so content can be properly tagged from creation.
+
+**⚠️ NOTE:** All articles should be tagged appropriately using this taxonomy system.
+""",
+                "labels": ["foundation-work", "taxonomy-required", "high-priority", "content-organization"]
+            }
+            
+            # Use centralized issue creation with duplicate detection
+            title = "🏷️ [FOUNDATION] Establish Taxonomy & Tagging System"
+            labels = ["foundation-work", "taxonomy-required", "high-priority", "content-organization"]
+            
+            result = self._create_issue(project_id, title, work_item_data["description"], labels)
+            
+            if result:
+                self.log(f"🏷️ Created taxonomy foundation work item for KB {kb_id}")
+            else:
+                self.log(f"🔄 Taxonomy foundation work item already exists - skipped creation")
+            
+        except Exception as e:
+            self.log(f"Warning: Could not create taxonomy foundation work item: {str(e)}")
+
+    def _create_taxonomy_and_structure_work_items(self, kb_id: str, kb_name: str) -> bool:
+        """Create foundational taxonomy and structure work items for a knowledge base"""
+        try:
+            from tools.gitlab_tools import GitLabTools
+            gitlab_tools = GitLabTools()
+            
+            # Find the GitLab create issue tool
+            create_issue_tool = None
+            for tool in gitlab_tools.tools():
+                if tool.name == "GitLabCreateIssueTool":
+                    create_issue_tool = tool
+                    break
+            
+            if not create_issue_tool:
+                self.log("GitLabCreateIssueTool not found for taxonomy work item creation")
+                return False
+                
+            # Get GitLab project ID from current KB context
+            project_id = (self.kb_context.get("gitlab_project_id") or 
+                         os.getenv('DEFAULT_GITLAB_PROJECT_ID', '27'))
+            
+            # 1. Create Taxonomy Definition Work Item (HIGHEST PRIORITY)
+            taxonomy_work_item = {
+                "project_id": str(project_id),
+                "title": f"🏗️ TAXONOMY: {kb_name} - Define Root Categories & Subcategory Structure",
+                "description": f"""**FOUNDATIONAL TAXONOMY DEFINITION - HIGHEST PRIORITY**
+
+📚 **Knowledge Base:** {kb_name} (ID: {kb_id})
+🎯 **Objective:** Establish the complete hierarchical category structure before any content creation
+
+**🏗️ MANDATORY STRUCTURE REQUIREMENTS:**
+- **Level 1 - ROOT CATEGORIES (3-8 categories):**
+  - Broad, high-level topic divisions covering complete KB scope
+  - Created with parent_id = null
+  - Examples: "Financial Planning", "Tax Strategies", "Investment Basics"
+
+- **Level 2 - SUBCATEGORIES (2-6 per root category):**
+  - Specific topic areas within each root category
+  - Created with parent_id = Level 1 category ID
+  - Examples under "Tax Strategies": "Deductions", "Credits", "Business Taxes"
+
+- **Level 3+ - CONTENT ARTICLES:**
+  - Actual content addressing specific topics
+  - NEVER placed directly under root categories
+  - Must be organized within appropriate subcategory structure
+
+**📋 DELIVERABLES:**
+1. Complete root category structure (Level 1)
+2. Comprehensive subcategory framework (Level 2)
+3. Content placement guidelines for Level 3+
+4. Hierarchical validation rules
+
+**⚠️ CRITICAL:** No content creation may begin until this taxonomy is approved and implemented.
+
+**👤 Assigned to:** ContentPlanner
+**🔄 Status:** Ready for immediate execution
+""",
+                "labels": ["taxonomy", "foundation", "high-priority", "structure", "blocking"]
+            }
+            
+            result = self._create_issue(project_id, taxonomy_work_item["title"], taxonomy_work_item["description"], taxonomy_work_item["labels"])
+            if result:
+                self.log(f"📊 Created taxonomy work item for: {kb_name}")
+            else:
+                self.log(f"🔄 Taxonomy work item already exists for: {kb_name}")
+            
+            # 2. Create Tagging System Work Item
+            tagging_work_item = {
+                "project_id": str(project_id),
+                "title": f"🏷️ TAGGING: {kb_name} - Create Tag Taxonomy & Classification System",
+                "description": f"""**TAG TAXONOMY & CLASSIFICATION SYSTEM**
+
+📚 **Knowledge Base:** {kb_name} (ID: {kb_id})
+🎯 **Objective:** Create comprehensive tagging system for content discoverability and organization
+
+**🏷️ TAG SYSTEM REQUIREMENTS:**
+- **Semantic Tag Categories:**
+  - Topic tags (align with category structure)
+  - Difficulty level tags (beginner, intermediate, advanced)
+  - Content type tags (guide, tutorial, reference, example)
+  - Audience tags (individual, family, business, professional)
+
+- **Cross-Reference Tags:**
+  - Related topic connections
+  - Prerequisite knowledge tags
+  - Complementary content tags
+
+- **Functional Tags:**
+  - Update frequency (annual, seasonal, ongoing)
+  - Content status (draft, review, approved, published)
+  - Priority level (high, medium, low)
+
+**📋 DELIVERABLES:**
+1. Complete tag taxonomy with categories and hierarchies
+2. Tagging guidelines and standards
+3. Tag validation rules and constraints
+4. Cross-referencing strategy for content discoverability
+
+**🔗 Dependencies:** Must align with taxonomy structure from taxonomy work item
+
+**👤 Assigned to:** ContentPlanner
+**🔄 Status:** Blocked by taxonomy completion
+""",
+                "labels": ["tagging", "taxonomy", "classification", "foundation", "high-priority"]
+            }
+            
+            result = self._create_issue(project_id, tagging_work_item["title"], tagging_work_item["description"], tagging_work_item["labels"])
+            if result:
+                self.log(f"🏷️ Created tagging work item for: {kb_name}")
+            else:
+                self.log(f"🔄 Tagging work item already exists for: {kb_name}")
+            
+            return True
+            
+        except Exception as e:
+            self.log(f"Error creating taxonomy/tagging work items: {str(e)}")
+            return False
+
+    def _generate_strategic_content(self, title: str, rationale: str) -> str:
+        """Generate comprehensive content for strategic articles"""
+        try:
+            # Use the LLM to generate high-quality content
+            prompt = f"""
+Create a comprehensive, expert-level article on the topic: "{title}"
+
+Context: {rationale}
+
+The article should be:
+- Comprehensive and detailed (1500+ words)
+- Practical and actionable
+- Well-structured with clear sections
+- Professional but accessible
+- Include specific examples and strategies
+- Provide step-by-step guidance where appropriate
+
+Focus on providing real value to families dealing with financial challenges during economic uncertainty.
+"""
+
+            response = self.llm.invoke([HumanMessage(content=prompt)])
+            content = response.content if hasattr(response, 'content') else str(response)
+            
+            if not content or len(content) < 500:
+                # Fallback content if LLM fails
+                content = f"""# {title}
+
+## Overview
+This article covers {title.lower()}, providing practical strategies and actionable advice.
+
+## Key Strategies
+1. **Assessment**: Start by evaluating your current situation
+2. **Planning**: Develop a comprehensive approach  
+3. **Implementation**: Take concrete steps toward your goals
+4. **Monitoring**: Track progress and adjust as needed
+
+## Getting Started
+{rationale}
+
+## Conclusion
+By following these strategies, you can make meaningful progress toward your financial goals.
+"""
+            
+            return content
+            
+        except Exception as e:
+            self.log(f"Error generating strategic content: {str(e)}")
+            # Return basic fallback content
+            return f"""# {title}
+
+## Overview
+This article provides guidance on {title.lower()}.
+
+## Key Points
+- Strategic approach to financial planning
+- Practical implementation steps
+- Long-term considerations
+
+## Getting Started
+{rationale}
+
+For more detailed guidance, consult with financial professionals.
+"""
+
     def validate_knowledge_base_context(self, state: AgentState) -> bool:
         """Validate that knowledge base context is properly established"""
         kb_id = state.get("knowledge_base_id")
@@ -1470,23 +2391,31 @@ Beginning execution of planned workflow...
             return None
     
     def _create_issue(self, project_id: str, title: str, description: str, labels: List[str]) -> Optional[Dict[str, Any]]:
-        """Create an issue using GitLab tools"""
+        """Create an issue using GitLabOperations with reliable duplicate prevention"""
         try:
-            for tool in self.tools:
-                if tool.name == "GitLabCreateIssueTool":
-                    labels_str = ",".join(labels) if labels else None
-                    result = tool._run(
-                        project_id=project_id,
-                        title=title,
-                        description=description,
-                        labels=labels_str
-                    )
-                    return self._parse_issue_from_result(result)
+            self.log(f"📝 Creating new work item: '{title}'")
             
-            return None
+            # Import the existing GitLab operations
+            from operations.gitlab_operations import GitLabOperations
+            
+            # Use GitLabOperations which has built-in duplicate detection
+            gitlab_ops = GitLabOperations()
+            result = gitlab_ops.create_issue_with_duplicate_check(
+                project_id=project_id,
+                title=title,
+                description=description,
+                labels=labels
+            )
+            
+            if result:
+                self.log(f"✅ Successfully created work item #{result['iid']}: {result['web_url']}")
+                return result
+            else:
+                self.log(f"❌ Failed to create work item (likely due to duplicate detection)")
+                return None
             
         except Exception as e:
-            self.log(f"Error creating issue: {str(e)}", "ERROR")
+            self.log(f"❌ Error creating issue: {str(e)}", "ERROR")
             return None
     
     def _add_issue_comment(self, project_id: str, issue_id: str, comment: str) -> bool:
@@ -1683,41 +2612,54 @@ Before I create this knowledge base, I'd like to gather some details to ensure i
         }
     
     def _generate_strategic_kb_description(self, kb_details: Dict[str, Any]) -> str:
-        """Generate strategic description for the knowledge base"""
-        domain = kb_details.get('domain', 'Personal Finance')
+        """Generate strategic description for the knowledge base using actual KB context"""
+        domain = kb_details.get('domain', 'Knowledge Base')
         purpose = kb_details.get('purpose', 'Educational resource')
-        target_audience = kb_details.get('target_audience', 'Working professionals')
+        target_audience = kb_details.get('target_audience', 'Learners and professionals')
         scope = kb_details.get('scope', 'Comprehensive strategies and best practices')
+        
+        # Get actual KB context if available
+        kb_context = self._get_kb_context_info(kb_details.get('kb_id'))
+        if kb_context:
+            domain = kb_context.get('name', domain)
+            kb_description = kb_context.get('description', scope)
+        else:
+            kb_description = scope
         
         description = f"""**Strategic Knowledge Base: {domain}**
 
 **Purpose & Vision:**
-{purpose} - This knowledge base serves as a comprehensive strategic resource designed to provide actionable insights and proven methodologies for achieving financial independence before traditional retirement age.
+{purpose} - This knowledge base serves as a comprehensive strategic resource designed to provide actionable insights and proven methodologies for {domain.lower()}.
 
 **Target Audience:**
-{target_audience} - Specifically designed for motivated individuals in their working years who seek to optimize their financial strategies and achieve early retirement through disciplined planning and informed decision-making.
+{target_audience} - Specifically designed for motivated individuals seeking to master the concepts and strategies covered in this knowledge base.
 
 **Content Strategy & Scope:**
-{scope} - This knowledge base encompasses a complete strategic framework covering all essential aspects of early retirement planning, from foundational budgeting principles to advanced investment strategies and wealth preservation techniques.
-
-**Strategic Framework Elements:**
-• **Financial Foundation Building**: Core budgeting, debt elimination, and emergency fund strategies
-• **Investment Mastery**: Portfolio construction, asset allocation, and risk management for early retirement
-• **Income Optimization**: Career advancement, side hustles, and passive income development
-• **Tax Strategy**: Advanced tax planning and optimization for wealth accumulation
-• **Retirement Planning**: Withdrawal strategies, healthcare planning, and lifestyle design
-• **Wealth Preservation**: Estate planning, insurance strategies, and long-term wealth protection
+{kb_description} - This knowledge base encompasses a strategic framework covering essential aspects of the topic domain with comprehensive coverage from foundational principles to advanced techniques.
 
 **Content Depth & Approach:**
-This knowledge base employs a strategic, actionable approach that combines theoretical understanding with practical implementation. Each topic is developed with clear step-by-step guidance, real-world examples, and measurable outcomes to ensure readers can immediately apply the concepts to their own financial journey.
+This knowledge base employs a strategic, actionable approach that combines theoretical understanding with practical implementation. Each topic is developed with clear step-by-step guidance, real-world examples, and measurable outcomes to ensure readers can immediately apply the concepts.
 
 **Value Proposition:**
-Unlike generic financial advice, this knowledge base provides a cohesive, strategic roadmap specifically designed for achieving financial freedom before age 60. The content is structured to build progressively from basic concepts to advanced strategies, making it suitable for both beginners and those with existing financial knowledge.
+This knowledge base provides a cohesive, strategic approach specifically designed for mastering the subject matter. The content is structured to build progressively from basic concepts to advanced strategies, making it suitable for both beginners and those with existing knowledge.
 
 **Publication Strategy:**
-Content is structured for multi-format publication including comprehensive ebook development and website resource creation, ensuring maximum accessibility and user engagement across different learning preferences."""
+Content is structured for multi-format publication including comprehensive resource development and website creation, ensuring maximum accessibility and user engagement across different learning preferences."""
 
         return description
+    
+    def _get_kb_context_info(self, kb_id):
+        """Get knowledge base context information"""
+        if not kb_id:
+            return None
+            
+        try:
+            if self.tools and hasattr(self.tools, 'get_knowledge_base_info'):
+                return self.tools.get_knowledge_base_info(kb_id)
+        except Exception as e:
+            self.log(f"Error getting KB context: {str(e)}", "ERROR")
+        
+        return None
     
     def _generate_strategic_tags(self, kb_details: Dict[str, Any]) -> str:
         """Generate strategic tags for the knowledge base"""
@@ -2130,3 +3072,202 @@ What knowledge base project would you like to start today?"""
                 "response_type": "greeting"
             }
         }
+
+    def _analyze_knowledge_base_gaps(self, work_state: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Analyze knowledge base for gaps and create prescriptive work items.
+        This method is called by the autonomous swarm to identify work.
+        """
+        try:
+            kb_id = work_state.get("knowledge_base_id")
+            if not kb_id:
+                self.log("No knowledge_base_id provided in work_state - cannot analyze gaps", "ERROR")
+                return []
+            
+            # Get current KB structure assessment
+            structure_assessment = self._assess_knowledge_base_structure(kb_id)
+            
+            available_work = []
+            
+            # Check if we need structure work items
+            if structure_assessment.get("needs_structure_work"):
+                available_work.append({
+                    "type": "structure_foundation",
+                    "title": f"Knowledge Base Structure Foundation - KB {kb_id}",
+                    "description": f"Create comprehensive structure for knowledge base {kb_id}",
+                    "priority": "high",
+                    "kb_id": kb_id,
+                    "work_category": "autonomous_management"
+                })
+            
+            # Check if we need taxonomy work items  
+            if structure_assessment.get("needs_taxonomy_work"):
+                available_work.append({
+                    "type": "taxonomy_foundation", 
+                    "title": f"Knowledge Base Taxonomy Foundation - KB {kb_id}",
+                    "description": f"Create taxonomy structure for knowledge base {kb_id}",
+                    "priority": "high",
+                    "kb_id": kb_id,
+                    "work_category": "autonomous_management"
+                })
+            
+            # Check for content gaps
+            if structure_assessment.get("article_count", 0) == 0:
+                available_work.append({
+                    "type": "content_initialization",
+                    "title": f"Initialize Content Creation - KB {kb_id}",
+                    "description": f"Start content creation process for knowledge base {kb_id}",
+                    "priority": "medium",
+                    "kb_id": kb_id,
+                    "work_category": "autonomous_management"
+                })
+            
+            return available_work
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing KB gaps: {str(e)}")
+            return []
+
+    def _execute_kb_work_to_completion(self, work_item: Dict[str, Any], work_state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute a knowledge base work item to completion.
+        This method actually performs the work identified by _analyze_knowledge_base_gaps.
+        """
+        try:
+            work_type = work_item.get("type")
+            kb_id = work_item.get("kb_id")
+            
+            self.logger.info(f"[ContentManagement] Executing {work_type} for KB {kb_id}")
+            
+            if work_type == "structure_foundation":
+                return self._execute_structure_foundation_work(work_item, work_state)
+            elif work_type == "taxonomy_foundation":
+                return self._execute_taxonomy_foundation_work(work_item, work_state)
+            elif work_type == "content_initialization":
+                return self._execute_content_initialization_work(work_item, work_state)
+            else:
+                return {
+                    "success": False,
+                    "error": f"Unknown work type: {work_type}",
+                    "work_type": work_type
+                }
+                
+        except Exception as e:
+            self.logger.error(f"Error executing KB work: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "work_type": work_item.get("type", "unknown")
+            }
+
+    def _execute_structure_foundation_work(self, work_item: Dict[str, Any], work_state: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute structure foundation work for a knowledge base"""
+        try:
+            kb_id = work_item.get("kb_id")
+            
+            # Create structure foundation work items in GitLab
+            issues_to_resolve = [
+                "Missing knowledge base structural foundation",
+                "Need content organization system", 
+                "Require article hierarchy definition"
+            ]
+            
+            self._create_structure_foundation_work_item(kb_id, issues_to_resolve)
+            
+            return {
+                "success": True,
+                "work_type": "structure_foundation",
+                "message": f"Created structure foundation work items for KB {kb_id}",
+                "items_created": len(issues_to_resolve)
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "work_type": "structure_foundation",
+                "error": str(e)
+            }
+
+    def _execute_taxonomy_foundation_work(self, work_item: Dict[str, Any], work_state: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute taxonomy foundation work for a knowledge base"""
+        try:
+            kb_id = work_item.get("kb_id")
+            
+            # Create taxonomy foundation work items in GitLab
+            issues_to_resolve = [
+                "Missing knowledge base taxonomy system",
+                "Need content categorization framework",
+                "Require tagging and classification system"
+            ]
+            
+            self._create_taxonomy_foundation_work_item(kb_id, issues_to_resolve)
+            
+            return {
+                "success": True,
+                "work_type": "taxonomy_foundation", 
+                "message": f"Created taxonomy foundation work items for KB {kb_id}",
+                "items_created": len(issues_to_resolve)
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "work_type": "taxonomy_foundation",
+                "error": str(e)
+            }
+
+    def _execute_content_initialization_work(self, work_item: Dict[str, Any], work_state: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute content initialization work for a knowledge base"""
+        try:
+            kb_id = work_item.get("kb_id")
+            
+            # Create a basic starter article to initialize content creation
+            from tools.knowledge_base_tools import KnowledgeBaseTools
+            kb_tools = KnowledgeBaseTools()
+            
+            # Create a welcome/introduction article
+            article_result = kb_tools.create_article(
+                knowledge_base_id=int(kb_id),
+                title="Welcome to the Knowledge Base",
+                content="""# Welcome to the Knowledge Base
+
+This is the starting point for our knowledge base. This article serves as an introduction and foundation for future content.
+
+## Getting Started
+
+This knowledge base will grow over time with valuable information and resources.
+
+## What to Expect
+
+- Comprehensive articles on key topics
+- Well-organized content structure
+- Easy navigation and search capabilities
+
+## Contributing
+
+Content is continuously being added and improved by our automated systems and expert contributors.
+""",
+                metadata={"type": "introduction", "auto_generated": True}
+            )
+            
+            if article_result.get("success"):
+                return {
+                    "success": True,
+                    "work_type": "content_initialization",
+                    "message": f"Created initial article for KB {kb_id}",
+                    "article_id": article_result.get("article_id"),
+                    "article_title": "Welcome to the Knowledge Base"
+                }
+            else:
+                return {
+                    "success": False,
+                    "work_type": "content_initialization",
+                    "error": f"Failed to create initial article: {article_result.get('error', 'Unknown error')}"
+                }
+                
+        except Exception as e:
+            return {
+                "success": False,
+                "work_type": "content_initialization", 
+                "error": str(e)
+            }

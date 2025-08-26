@@ -313,7 +313,7 @@ Please answer the questions above, and feel free to share any additional thought
         
         # Update design elements with user input
         design_elements = design_session["design_elements"]
-        design_elements = self._extract_design_elements(user_content, design_elements)
+        design_elements = self._extract_design_elements(user_content, design_elements, state)
         design_session["design_elements"] = design_elements
         
         # Check if we have enough information to create the KB directly
@@ -977,16 +977,14 @@ You can continue using the system normally while the implementation proceeds in 
         else:
             context_info = "\n\nNo knowledge base is currently in context."
         
-        # Use LLM for generating contextual responses
-        messages = [
-            self.get_system_message(),
-            HumanMessage(content=f"""Provide a helpful response to this user message: {user_message}
+        # Use LLM for generating contextual responses WITH conversation history
+        messages = self.get_messages_with_history(state)
+        messages.append(HumanMessage(content=f"""Provide a helpful response to this user message: {user_message}
 
 Context Information:{context_info}
 
 For questions about current knowledge base context, provide specific information about what is currently active.
-If they ask about setting context, explain how to use "use kb [number]" commands.""")
-        ]
+If they ask about setting context, explain how to use "use kb [number]" commands."""))
         
         response = self.llm.invoke(messages)
         return response.content
@@ -1130,12 +1128,16 @@ If they ask about setting context, explain how to use "use kb [number]" commands
         all_questions = base_questions + contextual_questions
         return "\n".join(all_questions)
     
-    def _extract_design_elements(self, user_input: str, current_elements: Dict[str, Any]) -> Dict[str, Any]:
+    def _extract_design_elements(self, user_input: str, current_elements: Dict[str, Any], state: AgentState = None) -> Dict[str, Any]:
         """Extract design elements from user input using LLM analysis"""
         
-        messages = [
-            self.get_system_message(),
-            HumanMessage(content=f"""Analyze this user input for knowledge base design elements:
+        # Use conversation history if state is provided
+        if state:
+            messages = self.get_messages_with_history(state)
+        else:
+            messages = [self.get_system_message()]
+            
+        messages.append(HumanMessage(content=f"""Analyze this user input for knowledge base design elements:
 
 User Input: "{user_input}"
 
@@ -1151,8 +1153,7 @@ Extract and update the following design elements based on the user input:
 Return ONLY a JSON object with these fields. Set fields to null if not mentioned or unclear.
 
 Example:
-{{"domain": "Personal Finance", "purpose": "Educational reference", "target_audience": "General public", "scope": "Budgeting, investments, planning", "structure_preferences": "Beginner to advanced progression"}}""")
-        ]
+{{"domain": "Personal Finance", "purpose": "Educational reference", "target_audience": "General public", "scope": "Budgeting, investments, planning", "structure_preferences": "Beginner to advanced progression"}}"""))
         
         try:
             response = self.llm.invoke(messages)

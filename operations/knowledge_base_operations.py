@@ -7,9 +7,11 @@ from models.article import Article
 from models.knowledge_base import KnowledgeBase
 from models.tags import Tags
 from utils.db_change_logger import DatabaseChangeLogger
+from utils.database_manager import db_manager, database_transaction, robust_database_connection
 
 load_dotenv(override=True)
 
+# Legacy environment variables (for backward compatibility)
 POSTGRES_HOST = os.getenv('POSTGRES_HOST')
 POSTGRES_PORT = os.getenv('POSTGRES_PORT', 5432)
 POSTGRES_DB = os.getenv('POSTGRES_DB')
@@ -18,6 +20,7 @@ POSTGRES_PASSWORD = os.getenv('POSTGRES_PASSWORD')
 
 class KnowledgeBaseOperations:
     def _get_connection(self):
+        """Legacy connection method - prefer using db_manager.get_connection()"""
         return psycopg2.connect(
             host=POSTGRES_HOST,
             port=POSTGRES_PORT,
@@ -27,14 +30,13 @@ class KnowledgeBaseOperations:
         )
     def get_knowledge_bases(self) -> List[str]:
         try:
-            with self._get_connection() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    # get all active knowledge bases
-                    sql = """SELECT * FROM knowledge_base WHERE is_active = TRUE;"""
-                    cur.execute(sql)
-                    knowledge_bases = cur.fetchall()
-                    # Return list of knowledge base names
-                    return [kb['name'] for kb in knowledge_bases]
+            with db_manager.get_cursor() as (conn, cur):
+                # get all active knowledge bases
+                sql = """SELECT * FROM knowledge_base WHERE is_active = TRUE;"""
+                cur.execute(sql)
+                knowledge_bases = cur.fetchall()
+                # Return list of knowledge base names
+                return [kb['name'] for kb in knowledge_bases]
         except Exception as e:
             print(f"An error occurred with KnowledgeBaseOperations.get_knowledge_bases: {e}")
             return []
@@ -42,28 +44,39 @@ class KnowledgeBaseOperations:
     def get_knowledge_bases_with_ids(self) -> List[Dict[str, Any]]:
         """Get knowledge bases with their IDs and names"""
         try:
-            with self._get_connection() as conn:
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    # get all active knowledge bases
-                    sql = """SELECT id, name, description FROM knowledge_base WHERE is_active = TRUE;"""
-                    cur.execute(sql)
-                    knowledge_bases = cur.fetchall()
-                    # Return list of dicts with id and name
-                    return [{"id": str(kb['id']), "name": kb['name'], "description": kb['description']} for kb in knowledge_bases]
+            with db_manager.get_cursor() as (conn, cur):
+                # get all active knowledge bases
+                sql = """SELECT id, name, description FROM knowledge_base WHERE is_active = TRUE;"""
+                cur.execute(sql)
+                knowledge_bases = cur.fetchall()
+                # Return list of dicts with id and name
+                return [{"id": str(kb['id']), "name": kb['name'], "description": kb['description']} for kb in knowledge_bases]
         except Exception as e:
             print(f"An error occurred with KnowledgeBaseOperations.get_knowledge_bases_with_ids: {e}")
+            return []
+    
+    def get_all_knowledge_bases(self) -> List[KnowledgeBase.BaseModel]:
+        """Get all active knowledge bases as BaseModel objects"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    sql = "SELECT * FROM knowledge_base WHERE is_active = TRUE;"
+                    cur.execute(sql)
+                    knowledge_bases = cur.fetchall()
+                    return [KnowledgeBase.BaseModel(**kb) for kb in knowledge_bases]
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.get_all_knowledge_bases: {e}")
             return []
     # update knowledge base by id
     def update_knowledge_base(self, knowledge_base: KnowledgeBase.UpdateModel) -> Optional[KnowledgeBase.BaseModel]:
         try:
-            with self._get_connection() as conn:
+            with database_transaction() as conn:
                 with conn.cursor() as cur:
                     sql = """UPDATE knowledge_base
-                             SET name = %s, description = %s, author_id = %s, gitlab_project_id = %s
+                             SET name = %s, description = %s, author_id = %s, gitlab_project_id = %s, status = %s
                              WHERE id = %s RETURNING id;"""
-                    cur.execute(sql, (knowledge_base.name, knowledge_base.description, knowledge_base.author_id, knowledge_base.gitlab_project_id, knowledge_base.id))
+                    cur.execute(sql, (knowledge_base.name, knowledge_base.description, knowledge_base.author_id, knowledge_base.gitlab_project_id, knowledge_base.status, knowledge_base.id))
                     id = cur.fetchone()[0]
-                    conn.commit()
                     
                     # Log the database change
                     DatabaseChangeLogger.log_knowledge_base_update(
@@ -78,21 +91,17 @@ class KnowledgeBaseOperations:
         except Exception as e:
             DatabaseChangeLogger.log_error("UPDATE", "Knowledge Base", str(e), str(knowledge_base.id))
             print(f"An error occurred with KnowledgeBaseOperations.update_knowledge_base: {e}")
-            return None
-        finally:
-            if conn:
-                conn.close()    
+            return None    
     
     def update_knowledge_base_gitlab_project_id(self, knowledge_base_id: int, gitlab_project_id: int) -> bool:
         """Update the GitLab project ID for an existing knowledge base"""
         try:
-            with self._get_connection() as conn:
+            with database_transaction() as conn:
                 with conn.cursor() as cur:
                     sql = """UPDATE knowledge_base
                              SET gitlab_project_id = %s, updated_at = CURRENT_TIMESTAMP
                              WHERE id = %s;"""
                     cur.execute(sql, (gitlab_project_id, knowledge_base_id))
-                    conn.commit()
                     
                     # Log the database change
                     DatabaseChangeLogger.log_knowledge_base_update(
@@ -106,9 +115,6 @@ class KnowledgeBaseOperations:
             DatabaseChangeLogger.log_error("UPDATE", "Knowledge Base GitLab Project ID", str(e), str(knowledge_base_id))
             print(f"An error occurred with KnowledgeBaseOperations.update_knowledge_base_gitlab_project_id: {e}")
             return False
-        finally:
-            if conn:
-                conn.close()
         
     def get_knowledge_base_by_id(self, knowledge_base_id: str) -> Optional[KnowledgeBase.BaseModel]:
         try:
@@ -160,9 +166,9 @@ class KnowledgeBaseOperations:
         try:
             with self._get_connection() as conn:
                 with conn.cursor() as cur:
-                    sql = """INSERT INTO knowledge_base (name, description, author_id, gitlab_project_id)
-                             VALUES (%s, %s, %s, %s) RETURNING id;"""
-                    cur.execute(sql, (knowledge_base.name, knowledge_base.description, knowledge_base.author_id, knowledge_base.gitlab_project_id))
+                    sql = """INSERT INTO knowledge_base (name, description, author_id, gitlab_project_id, status)
+                             VALUES (%s, %s, %s, %s, %s) RETURNING id;"""
+                    cur.execute(sql, (knowledge_base.name, knowledge_base.description, knowledge_base.author_id, knowledge_base.gitlab_project_id, knowledge_base.status))
                     id = cur.fetchone()[0]
                     conn.commit()
                     
@@ -180,22 +186,19 @@ class KnowledgeBaseOperations:
             return None
 
         # get article_hierarchy function is a recursive function that returns the hierarchy of articles in a knowledge base
-    def get_article_hierarchy(self, knowledge_base_id: str) -> List[Article.HierarchyModel]:
-        conn = None
+    def get_article_hierarchy(self, knowledge_base_id: str) -> List[Dict[str, Any]]:
         try:
-            conn = self._get_connection()
-            with conn.cursor() as cur:
-                sql = "SELECT * FROM get_article_hierarchy(%s);"
-                print(f"Executing SQL: {sql} with knowledge_base_id: {knowledge_base_id}")
-                cur.execute(sql, (knowledge_base_id,))
-                articles = cur.fetchall()
-                return articles
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    sql = "SELECT * FROM get_article_hierarchy(%s);"
+                    print(f"Executing SQL: {sql} with knowledge_base_id: {knowledge_base_id}")
+                    cur.execute(sql, (knowledge_base_id,))
+                    articles = cur.fetchall()
+                    # Convert to list of dictionaries
+                    return [dict(article) for article in articles]
         except Exception as e:
             print(f"An error occurred with KnowledgeBaseOperations.get_article_hierarchy: {e}")
             return []
-        finally:
-            if conn:
-                conn.close()
 
 
     def get_root_level_articles(self, knowledge_base_id: str) -> list:
@@ -209,6 +212,21 @@ class KnowledgeBaseOperations:
                     return articles
         except Exception as e:
             print(f"An error occurred with KnowledgeBaseOperations.get_root_level_articles: {e}")
+            return []
+
+    def get_articles_by_knowledge_base_id(self, knowledge_base_id: str) -> List[Dict[str, Any]]:
+        """Get all articles for a specific knowledge base"""
+        try:
+            with self._get_connection() as conn:
+                with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                    sql = """SELECT * FROM articles 
+                             WHERE knowledge_base_id = %s AND is_active = TRUE 
+                             ORDER BY created_at ASC;"""
+                    cur.execute(sql, (knowledge_base_id,))
+                    articles = cur.fetchall()
+                    return [dict(article) for article in articles]
+        except Exception as e:
+            print(f"An error occurred with KnowledgeBaseOperations.get_articles_by_knowledge_base_id: {e}")
             return []
 
     def get_articles_by_parentids(self, knowledge_base_id: str, parent_ids: list[str]) -> list[str]:
@@ -260,10 +278,7 @@ class KnowledgeBaseOperations:
         except Exception as e:
             DatabaseChangeLogger.log_error("CREATE", "Article", str(e))
             print(f"An error occurred with KnowledgeBaseOperations.insert_article: {e}")
-            return None
-        finally:
-            if conn:
-                conn.close()  
+            return None  
 
     def update_article(self, knowledge_base_id: str, article: Article.UpdateModel) -> Article.BaseModel:
         try:

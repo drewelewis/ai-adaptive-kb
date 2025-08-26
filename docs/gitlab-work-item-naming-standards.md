@@ -10,11 +10,11 @@ This document defines standardized naming conventions for GitLab work items crea
 
 | Work Type | Title Format | Purpose | Primary Agent | Content Gate |
 |-----------|-------------|---------|---------------|--------------|
-| **KB Definition (REQUIRED FIRST)** | `Define KB: [KB Name]` | KB definition and planning gate | All Agents (input) | **MUST BE CLOSED** before content creation |
-| **Content Planning** | `KB-PLAN: [KB Name] - Content Planning & Strategy` | Strategic content planning and structure design | ContentPlannerAgent | Requires closed "Define KB" |
-| **Content Creation** | `KB-CREATE: [KB Name] - Content Development` | Article creation and content development | ContentCreatorAgent | Requires closed "Define KB" |
-| **Content Review** | `KB-REVIEW: [KB Name] - Quality Assurance & Review` | Quality review and optimization | ContentReviewerAgent | Requires closed "Define KB" |
-| **Content Research** | `KB-RESEARCH: [KB Name] - Research & Analysis` | Domain research and competitive analysis | ContentRetrievalAgent | Requires closed "Define KB" |
+| **KB Setup** | `KB Setup: [KB Name]` | KB setup and planning coordination | All Agents | **Project coordination** |
+| **Content Planning** | `KB-PLAN: [KB Name] - Content Planning & Strategy` | Strategic content planning and structure design | ContentPlannerAgent | Works alongside setup |
+| **Content Creation** | `KB-CREATE: [KB Name] - Content Development` | Article creation and content development | ContentCreatorAgent | Can proceed when project available |
+| **Content Review** | `KB-REVIEW: [KB Name] - Quality Assurance & Review` | Quality review and optimization | ContentReviewerAgent | Can proceed when project available |
+| **Content Research** | `KB-RESEARCH: [KB Name] - Research & Analysis` | Domain research and competitive analysis | ContentRetrievalAgent | Can proceed when project available |
 | **KB Updates** | `KB-UPDATE: [KB Name] - Knowledge Base Updates` | Ongoing KB maintenance and updates | ContentManagementAgent | May proceed if KB exists |
 
 ### **Specialized Work Item Types**
@@ -26,28 +26,28 @@ This document defines standardized naming conventions for GitLab work items crea
 | **KB Integration** | `KB-INTEGRATE: [KB Name] - System Integration` | Third-party integrations |
 | **Human Feedback** | `KB-FEEDBACK: [KB Name] - Human Review Required` | Items requiring human input |
 
-## 🚪 "Define KB" Gate Requirement
+## � GitLab Project Activation
 
-### **Critical Workflow Gate**
-The "Define KB: [KB Name]" work item serves as a **mandatory gate** for all content creation:
+### **Immediate Content Creation**
+The "KB Setup: [KB Name]" work item serves as **project coordination** for all content creation:
 
-- **MUST be created FIRST** for every new knowledge base
-- **MUST be CLOSED** before any content creation can begin
-- Content agents can contribute input and ask questions while it's open
-- Content creation work items are blocked until this gate is closed
+- **Created for coordination** but does not block content creation
+- **Content creation can proceed immediately** when GitLab projects are available  
+- Content agents can work alongside setup coordination
+- No blocking dependencies - all work proceeds in parallel
 
-### **Gate Workflow**
-1. Supervisor creates "Define KB: [KB Name]" (state: opened)
+### **Project-Based Workflow**
+1. Supervisor creates "KB Setup: [KB Name]" (state: opened)
 2. All content agents can contribute planning input via comments
 3. Human stakeholders provide feedback and requirements
 4. KB definition is finalized with clear scope and structure  
-5. Supervisor closes "Define KB" work item (state: closed)
-6. Content creation work items can now be processed
+5. Content creation begins immediately when GitLab project is available
+6. All work items can be processed in parallel
 
-### **Agent Behavior During Gate**
-- **Input Phase** (Define KB open): Agents contribute planning input, ask questions, provide suggestions
-- **Creation Phase** (Define KB closed): Agents can process content creation work items
-- **Gate Check**: All agents must verify "Define KB" status before content operations
+### **Agent Behavior With Projects**
+- **Setup Phase**: Agents contribute planning input, ask questions, provide suggestions
+- **Creation Phase**: Agents can process content creation work items immediately when projects are available
+- **Project Check**: All agents verify GitLab project availability before content operations
 
 ## 🏷️ Label Standards
 
@@ -57,27 +57,27 @@ The "Define KB: [KB Name]" work item serves as a **mandatory gate** for all cont
 - Priority level: `high-priority`, `medium-priority`, `low-priority`
 - Agent assignment: `content-management`, `content-planner`, `content-creator`, `content-reviewer`, `content-retrieval`
 
-### **Special Labels for Define KB Work Items**
-- `define-kb` - Marks the mandatory definition gate work item
-- `planning-phase` - Indicates planning/input phase activity
-- `content-gate` - Identifies work items that gate content creation
+### **Special Labels for KB Setup Work Items**
+- `kb-setup` - Marks the project coordination work item
+- `planning-phase` - Indicates planning/coordination phase activity
+- `project-coordination` - Identifies work items for project management
 
 ### **Optional Labels**
 - `urgent` - Requires immediate attention
 - `blocked` - Work item is blocked waiting for dependencies
 - `human-input-required` - Needs human feedback or approval
 - `cross-kb` - Work spans multiple knowledge bases
-- `gate-closed` - Define KB has been completed (for reference)
+- `setup-complete` - KB Setup coordination has been completed (for reference)
 
 ## 📝 Work Item Description Template
 
-### **Define KB Work Item Template**
+### **KB Setup Work Item Template**
 ```markdown
 **Target KB:** [Knowledge Base Name]
 **KB Domain:** [Topic area and scope]
 **KB Context:** [Strategic purpose and background]
 
-**Definition Requirements:**
+**Setup Requirements:**
 - [ ] Finalize KB scope and boundaries
 - [ ] Define target audience and use cases
 - [ ] Establish content structure and hierarchy
@@ -102,14 +102,14 @@ The "Define KB: [KB Name]" work item serves as a **mandatory gate** for all cont
 - [ ] Human stakeholders have approved the definition
 - [ ] KB scope, structure, and objectives are clearly defined
 - [ ] Success criteria and completion standards are established
-- [ ] Ready to proceed with content creation work items
+- [ ] GitLab project is created and content creation can proceed immediately
 
-**Gate Status:** 
-- ⚠️ **OPEN**: Content creation is BLOCKED - planning phase active
-- ✅ **CLOSED**: Content creation is UNBLOCKED - definition complete
+**Project Status:** 
+- 🚀 **ACTIVE**: Content creation can proceed immediately when GitLab project is available
+- ✅ **COMPLETE**: Setup coordination is finished, content work continues
 ```
 
-### **KB-CREATE Work Item Template** (requires closed Define KB)
+### **KB-CREATE Work Item Template** (works alongside setup)
 ```markdown
 **Target KB:** [Knowledge Base Name]
 **KB Domain:** [Topic area and scope]

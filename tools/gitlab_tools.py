@@ -33,21 +33,39 @@ class GitLabTools:
         args_schema: Optional[ArgsSchema] = GitLabGetProjectsListToolInputModel
      
         def _run(self) -> str:
-            projects = gitlab_operations.get_projects_list()
-            if not projects:
-                return "No projects found or error occurred while fetching projects."
+            print(f"🔧 TOOL: GitLabGetProjectsListTool CALLED")
+            print(f"🔍 Retrieving GitLab projects...")
             
-            # Format the output nicely
-            result = "GitLab Projects:\n"
-            for project in projects:
-                project_id = project.get('id', 'N/A')
-                name = project.get('name', 'Unknown')
-                path = project.get('path_with_namespace', project.get('path', 'N/A'))
-                description = project.get('description', 'No description')
-                visibility = project.get('visibility', 'unknown')
+            try:
+                projects = gitlab_operations.get_projects_list()
                 
-                result += f"\n📁 {name} (ID: {project_id})\n"
-                result += f"   Path: {path}\n"
+                if not projects:
+                    print(f"⚠️ No projects found or error occurred")
+                    return "No projects found or error occurred while fetching projects."
+                
+                print(f"📊 Found {len(projects)} GitLab projects")
+                
+                # Format the output nicely
+                result = "GitLab Projects:\n"
+                for project in projects:
+                    project_id = project.get('id', 'N/A')
+                    name = project.get('name', 'Unknown')
+                    path = project.get('path_with_namespace', project.get('path', 'N/A'))
+                    description = project.get('description', 'No description')
+                    visibility = project.get('visibility', 'unknown')
+                    
+                    result += f"\n📁 {name} (ID: {project_id})\n"
+                    result += f"   Path: {path}\n"
+                    print(f"📁 Project: {name} (ID: {project_id})")
+                
+                print(f"✅ SUCCESS: Retrieved {len(projects)} GitLab projects")
+                return result
+                
+            except Exception as e:
+                print(f"💥 ERROR in GitLabGetProjectsListTool: {str(e)}")
+                import traceback
+                print(f"🔍 Traceback: {traceback.format_exc()}")
+                return f"Error retrieving projects: {str(e)}"
                 result += f"   Visibility: {visibility}\n"
                 if description and description != 'No description':
                     result += f"   Description: {description}\n"
@@ -242,7 +260,11 @@ class GitLabTools:
         def _run(self, project_id: str, title: str, description: str, labels: Optional[str] = None) -> str:
             labels_list = []
             if labels:
-                labels_list = [label.strip() for label in labels.split(',') if label.strip()]
+                # Handle both string and list inputs for labels
+                if isinstance(labels, list):
+                    labels_list = [str(label).strip() for label in labels if str(label).strip()]
+                else:
+                    labels_list = [label.strip() for label in labels.split(',') if label.strip()]
             
             issue = gitlab_operations.create_issue(project_id, title, description, labels_list)
             if not issue:
@@ -436,43 +458,69 @@ class GitLabTools:
         args_schema: Optional[ArgsSchema] = GitLabGetUserAssignedIssuesToolInputModel
      
         def _run(self, username: str, state: str = "opened", project_id: Optional[str] = None) -> str:
-            issues = gitlab_operations.get_user_assigned_issues(username, state, project_id)
-            if not issues:
+            try:
+                print(f"🔧 TOOL: GitLabGetUserAssignedIssuesTool CALLED")
+                print(f"📝 Parameters:")
+                print(f"   - Username: {username}")
+                print(f"   - State: {state}")
+                print(f"   - Project ID: {project_id}")
+                
+                print(f"🔍 Retrieving issues assigned to user '{username}'...")
+                issues = gitlab_operations.get_user_assigned_issues(username, state, project_id)
+                
+                print(f"📊 Issues found: {len(issues) if issues else 0}")
+                
+                if not issues:
+                    project_filter = f" in project {project_id}" if project_id else ""
+                    message = f"No {state} issues found assigned to user '{username}'{project_filter}."
+                    print(f"❌ {message}")
+                    return message
+            
+                # Format the output nicely
                 project_filter = f" in project {project_id}" if project_id else ""
-                return f"No {state} issues found assigned to user '{username}'{project_filter}."
-            
-            # Format the output nicely
-            project_filter = f" in project {project_id}" if project_id else ""
-            result = f"Issues assigned to '{username}' ({state}){project_filter}:\n\n"
-            
-            for issue in issues:
-                issue_id = issue.get('id', 'N/A')
-                iid = issue.get('iid', 'N/A')
-                title = issue.get('title', 'No title')
-                issue_state = issue.get('state', 'unknown')
-                web_url = issue.get('web_url', 'N/A')
-                project_id_val = issue.get('project_id', 'N/A')
-                labels = issue.get('labels', [])
-                milestone = issue.get('milestone', 'No milestone')
-                created_at = issue.get('created_at', 'Unknown')
-                updated_at = issue.get('updated_at', 'Unknown')
+                result = f"Issues assigned to '{username}' ({state}){project_filter}:\n\n"
                 
-                result += f"🎯 **{title}** (#{iid})\n"
-                result += f"   📁 Project ID: {project_id_val}\n"
-                result += f"   📊 State: {issue_state}\n"
-                result += f"   🔗 URL: {web_url}\n"
+                print(f"📋 Formatting {len(issues)} issues for display...")
                 
-                if labels:
-                    result += f"   🏷️ Labels: {', '.join(labels)}\n"
+                for i, issue in enumerate(issues, 1):
+                    issue_id = issue.get('id', 'N/A')
+                    iid = issue.get('iid', 'N/A')
+                    title = issue.get('title', 'No title')
+                    issue_state = issue.get('state', 'unknown')
+                    web_url = issue.get('web_url', 'N/A')
+                    project_id_val = issue.get('project_id', 'N/A')
+                    labels = issue.get('labels', [])
+                    milestone = issue.get('milestone', 'No milestone')
+                    created_at = issue.get('created_at', 'Unknown')
+                    updated_at = issue.get('updated_at', 'Unknown')
+                    
+                    print(f"   {i}. Issue #{iid}: {title[:50]}{'...' if len(title) > 50 else ''}")
+                    
+                    result += f"🎯 **{title}** (#{iid})\n"
+                    result += f"   📁 Project ID: {project_id_val}\n"
+                    result += f"   📊 State: {issue_state}\n"
+                    result += f"   🔗 URL: {web_url}\n"
+                    
+                    if labels:
+                        result += f"   🏷️ Labels: {', '.join(labels)}\n"
+                    
+                    if milestone != 'No milestone':
+                        result += f"   🎯 Milestone: {milestone}\n"
+                    
+                    result += f"   📅 Created: {created_at}\n"
+                    result += f"   ⏰ Updated: {updated_at}\n"
+                    result += "   " + "-" * 50 + "\n\n"
                 
-                if milestone != 'No milestone':
-                    result += f"   🎯 Milestone: {milestone}\n"
+                print(f"✅ GitLabGetUserAssignedIssuesTool completed successfully - returned {len(issues)} issues")
+                return result
                 
-                result += f"   📅 Created: {created_at}\n"
-                result += f"   ⏰ Updated: {updated_at}\n"
-                result += "   " + "-" * 50 + "\n\n"
-            
-            return result
+            except Exception as e:
+                error_msg = f"❌ GitLabGetUserAssignedIssuesTool failed: {str(e)}"
+                print(error_msg)
+                print(f"🔍 Full error traceback:")
+                import traceback
+                traceback.print_exc()
+                return error_msg
 
     class GitLabCreateKBWorkItemsTool(BaseTool):
         name: str = "GitLabCreateKBWorkItemsTool"
@@ -514,23 +562,34 @@ class GitLabTools:
      
         def _run(self, kb_name: str, kb_id: int, kb_description: str, gitlab_project_id: int) -> str:
             try:
+                print(f"🔧 TOOL: GitLabCreateKBWorkItemsTool CALLED")
+                print(f"📝 Parameters:")
+                print(f"   - KB Name: {kb_name}")
+                print(f"   - KB ID: {kb_id}")
+                print(f"   - KB Description: {kb_description[:100]}{'...' if len(kb_description) > 100 else ''}")
+                print(f"   - GitLab Project ID: {gitlab_project_id}")
+                
                 # Import the orchestration configuration
                 import sys
                 import os
                 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
                 from config.gitlab_kb_work_orchestration import GitLabKBWorkOrchestrator
                 
+                print(f"🏗️ Getting work items for KB initialization...")
                 # Get all work items for this KB
                 work_items = GitLabKBWorkOrchestrator.get_kb_initialization_work_items(
                     kb_name, kb_id, kb_description, gitlab_project_id
                 )
+                print(f"📋 Work items to create: {len(work_items)}")
                 
                 # Create milestones first
+                print(f"🏁 Creating milestones...")
                 milestones = GitLabKBWorkOrchestrator.get_milestone_structure()
                 created_milestones = []
                 
-                for milestone in milestones:
+                for i, milestone in enumerate(milestones, 1):
                     try:
+                        print(f"   {i}. Creating milestone: {milestone['title']}")
                         milestone_result = gitlab_operations.create_milestone(
                             gitlab_project_id, 
                             milestone["title"],
@@ -539,15 +598,20 @@ class GitLabTools:
                         )
                         if milestone_result:
                             created_milestones.append(milestone["title"])
+                            print(f"      ✅ Created successfully")
+                        else:
+                            print(f"      ❌ Failed to create")
                     except Exception as e:
-                        print(f"Warning: Could not create milestone {milestone['title']}: {e}")
+                        print(f"      ⚠️ Warning: Could not create milestone {milestone['title']}: {e}")
                 
                 # Create labels
+                print(f"🏷️ Creating labels...")
                 labels = GitLabKBWorkOrchestrator.get_label_definitions()
                 created_labels = []
                 
-                for label in labels:
+                for i, label in enumerate(labels, 1):
                     try:
+                        print(f"   {i}. Creating label: {label['name']}")
                         label_result = gitlab_operations.create_label(
                             gitlab_project_id,
                             label["name"],
@@ -556,15 +620,22 @@ class GitLabTools:
                         )
                         if label_result:
                             created_labels.append(label["name"])
+                            print(f"      ✅ Created successfully")
+                        else:
+                            print(f"      ❌ Failed to create")
                     except Exception as e:
-                        print(f"Warning: Could not create label {label['name']}: {e}")
+                        print(f"      ⚠️ Warning: Could not create label {label['name']}: {e}")
                 
                 # Create work item issues
+                print(f"📝 Creating work item issues...")
                 created_issues = []
                 failed_issues = []
                 
-                for work_item in work_items:
+                for i, work_item in enumerate(work_items, 1):
                     try:
+                        print(f"   {i}. Creating issue: {work_item['title'][:50]}{'...' if len(work_item['title']) > 50 else ''}")
+                        print(f"      Assignee: {work_item.get('assignee', 'unassigned')}")
+                        
                         issue_result = gitlab_operations.create_issue(
                             project_id=str(gitlab_project_id),
                             title=work_item["title"],
@@ -581,17 +652,26 @@ class GitLabTools:
                                 "type": work_item.get("work_item_type", "unknown").value,
                                 "issue_id": issue_result.get('issue_id')
                             })
+                            print(f"      ✅ Created issue #{issue_result.get('issue_id')}")
                         else:
                             failed_issues.append({
                                 "title": work_item["title"],
                                 "error": issue_result.get('error', 'Unknown error')
                             })
+                            print(f"      ❌ Failed: {issue_result.get('error', 'Unknown error')}")
                     
                     except Exception as e:
                         failed_issues.append({
                             "title": work_item["title"],
                             "error": str(e)
                         })
+                        print(f"      ❌ Exception: {str(e)}")
+                
+                print(f"📊 Summary:")
+                print(f"   - Milestones created: {len(created_milestones)}")
+                print(f"   - Labels created: {len(created_labels)}")
+                print(f"   - Issues created: {len(created_issues)}")
+                print(f"   - Issues failed: {len(failed_issues)}")
                 
                 # Format comprehensive result
                 result = f"🎯 **KB Work Orchestration Complete for '{kb_name}'**\n\n"
@@ -644,10 +724,16 @@ class GitLabTools:
                 result += f"3. Monitor progress through GitLab project dashboard\n"
                 result += f"4. Review and approve deliverables at each milestone\n"
                 
+                print(f"✅ GitLabCreateKBWorkItemsTool completed successfully")
                 return result
                 
             except Exception as e:
-                return f"❌ Error creating KB work items: {str(e)}"
+                error_msg = f"❌ GitLabCreateKBWorkItemsTool failed: {str(e)}"
+                print(error_msg)
+                print(f"🔍 Full error traceback:")
+                import traceback
+                traceback.print_exc()
+                return error_msg
 
     class GitLabGetWorkItemsTool(BaseTool):
         name: str = "GitLabGetWorkItemsTool"

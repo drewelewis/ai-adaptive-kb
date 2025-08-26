@@ -33,10 +33,10 @@
             "preLaunchTask": "Clear Terminal"
         },
         {
-            "name": "Debug: Multi Agent Orchestrator",
+            "name": "Debug: Content Agent Swarm",
             "type": "debugpy",
             "request": "launch",
-            "program": "agents/orchestrator.py",
+            "program": "content_agent_swarm.py",
             "console": "integratedTerminal",
             "internalConsoleOptions": "openOnSessionStart",
             "preLaunchTask": "Clear Terminal"

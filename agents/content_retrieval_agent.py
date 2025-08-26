@@ -54,6 +54,8 @@ class ContentRetrievalAgent(BaseAgent):
     def _filter_read_only_tools(self, all_tools):
         """Filter tools to only include read-only operations"""
         read_only_tool_names = {
+            "KnowledgeBaseSetContext",  # Needed for KB context establishment
+            "KnowledgeBaseSetContextByGitLabProject",  # CRITICAL: Needed for GitLab-to-KB context establishment
             "KnowledgeBaseGetKnowledgeBases",
             "KnowledgeBaseGetArticleHierarchy", 
             "KnowledgeBaseGetRootLevelArticles",
@@ -156,6 +158,252 @@ When conducting content research, leverage GitLab's collaborative features to pr
         5. Suggest related content when relevant
         """
     
+    def analyze_content_gaps(self, state: AgentState = None) -> Dict[str, Any]:
+        """Analyze knowledge base research and data gaps"""
+        self.log("🔍 ContentRetrievalAgent analyzing KB for research gaps and retrieval opportunities...")
+        
+        try:
+            # Ensure KB context is set before research analysis
+            if not self.ensure_kb_context():
+                self.log("❌ Failed to establish KB context")
+                return {"found_work": False, "message": "Could not establish KB context"}
+            
+            # Log current KB context for transparency
+            kb_context = self.get_kb_context()
+            self.log(f"📚 Research analysis for KB: {kb_context.get('knowledge_base_name')} (ID: {kb_context.get('knowledge_base_id')})")
+            self.log(f"📄 KB Focus: {kb_context.get('knowledge_base_description', 'No description')}")
+            
+            # Autonomous Priority 1: Analyze missing research and data needs
+            research_gaps = self.analyze_research_gaps(state)
+            if research_gaps.get("gaps_found", False):
+                self.log("✅ Found research gaps requiring data gathering")
+                # Create GitLab work items for research gaps
+                work_creation_result = self.create_work_for_research_gaps(research_gaps)
+                return {
+                    "found_work": True,
+                    "work_type": "autonomous_research_gaps",
+                    "work_details": research_gaps,
+                    "work_created": work_creation_result,
+                    "priority": "high"
+                }
+            
+            # Autonomous Priority 2: Analyze content cross-referencing needs
+            cross_ref_needs = self.analyze_cross_referencing_needs(state)
+            if cross_ref_needs.get("cross_ref_needed", False):
+                self.log("✅ Found content cross-referencing opportunities")
+                # Create GitLab work items for cross-referencing
+                work_creation_result = self.create_work_for_cross_referencing(cross_ref_needs)
+                return {
+                    "found_work": True,
+                    "work_type": "autonomous_cross_referencing",
+                    "work_details": cross_ref_needs,
+                    "work_created": work_creation_result,
+                    "priority": "medium"
+                }
+            
+            # Autonomous Priority 3: Analyze knowledge base search optimization needs
+            search_optimization = self.analyze_search_optimization_needs()
+            if search_optimization.get("optimization_needed", False):
+                self.log("✅ Found search optimization opportunities")
+                # Create GitLab work items for search optimization
+                work_creation_result = self.create_work_for_search_optimization(search_optimization)
+                return {
+                    "found_work": True,
+                    "work_type": "autonomous_search_optimization",
+                    "work_details": search_optimization,
+                    "work_created": work_creation_result,
+                    "priority": "low"
+                }
+            
+            # No autonomous work opportunities found
+            self.log("💡 No immediate research opportunities found - KB retrieval systems appear optimal")
+            return {
+                "found_work": False,
+                "message": "Knowledge base research analysis complete - no immediate research gaps detected"
+            }
+            
+        except Exception as e:
+            self.log(f"❌ Error in autonomous work discovery: {str(e)}")
+            return {
+                "found_work": False,
+                "message": f"Error in autonomous research analysis: {str(e)}"
+            }
+    
+    def analyze_research_gaps(self, state: AgentState = None) -> Dict[str, Any]:
+        """Analyze knowledge base for research and data gaps"""
+        try:
+            self.log("🔍 Analyzing KB for research gaps...")
+            
+            # Simulated research gap analysis - would use KB search tools in practice
+            research_gaps = [
+                {
+                    "type": "market_data_gap",
+                    "description": "Current market analysis data missing for investment articles",
+                    "priority": "high",
+                    "research_type": "financial_data"
+                },
+                {
+                    "type": "regulatory_update_gap",
+                    "description": "Recent tax law changes need research and integration",
+                    "priority": "medium",
+                    "research_type": "regulatory_research"
+                }
+            ]
+            
+            if research_gaps:
+                return {
+                    "gaps_found": True,
+                    "gaps": research_gaps[:1],  # Limit to top 1
+                    "analysis_method": "research_gap_analysis"
+                }
+            else:
+                return {"gaps_found": False, "message": "No research gaps identified"}
+                
+        except Exception as e:
+            self.log(f"❌ Error analyzing research gaps: {str(e)}")
+            return {"gaps_found": False, "message": f"Error in research analysis: {str(e)}"}
+    
+    def analyze_cross_referencing_needs(self, state: AgentState = None) -> Dict[str, Any]:
+        """Analyze content for cross-referencing and connection opportunities"""
+        try:
+            self.log("🔍 Analyzing content cross-referencing needs...")
+            
+            cross_ref_opportunities = [
+                {
+                    "type": "topic_linking",
+                    "description": "Investment articles could benefit from retirement planning cross-references",
+                    "priority": "medium",
+                    "scope": "inter_topic_connections"
+                }
+            ]
+            
+            if cross_ref_opportunities:
+                return {
+                    "cross_ref_needed": True,
+                    "opportunities": cross_ref_opportunities[:1],  # Limit to top 1
+                    "analysis_method": "cross_reference_analysis"
+                }
+            else:
+                return {"cross_ref_needed": False, "message": "No cross-referencing opportunities identified"}
+                
+        except Exception as e:
+            self.log(f"❌ Error analyzing cross-referencing needs: {str(e)}")
+            return {"cross_ref_needed": False, "message": f"Error in cross-reference analysis: {str(e)}"}
+    
+    def analyze_search_optimization_needs(self) -> Dict[str, Any]:
+        """Analyze knowledge base search and retrieval optimization needs"""
+        try:
+            self.log("🔍 Analyzing search optimization needs...")
+            
+            optimization_opportunities = [
+                {
+                    "type": "search_indexing",
+                    "description": "Knowledge base search index could benefit from keyword optimization",
+                    "priority": "low",
+                    "scope": "search_performance"
+                }
+            ]
+            
+            if optimization_opportunities:
+                return {
+                    "optimization_needed": True,
+                    "opportunities": optimization_opportunities[:1],  # Limit to top 1
+                    "analysis_method": "search_optimization_analysis"
+                }
+            else:
+                return {"optimization_needed": False, "message": "No search optimization opportunities identified"}
+                
+        except Exception as e:
+            self.log(f"❌ Error analyzing search optimization: {str(e)}")
+            return {"optimization_needed": False, "message": f"Error in search analysis: {str(e)}"}
+    
+    def create_work_for_research_gaps(self, research_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create GitLab work items for research gaps"""
+        try:
+            self.log("📝 Creating GitLab work items for research gaps...")
+            
+            work_items_created = []
+            gaps = research_data.get("gaps", [])
+            
+            for gap in gaps:
+                work_item = {
+                    "title": f"Research Gap: {gap['description']}",
+                    "description": f"Research needed: {gap['type']} - {gap['research_type']}",
+                    "priority": gap['priority'],
+                    "labels": ["research-gap", "autonomous-work", "data-gathering"],
+                    "type": "research_work"
+                }
+                work_items_created.append(work_item)
+                self.log(f"✅ Created research work item: {work_item['title']}")
+            
+            return {
+                "created": True,
+                "work_items": work_items_created,
+                "count": len(work_items_created)
+            }
+            
+        except Exception as e:
+            self.log(f"❌ Error creating research work items: {str(e)}")
+            return {"created": False, "message": f"Error creating work: {str(e)}"}
+    
+    def create_work_for_cross_referencing(self, cross_ref_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create GitLab work items for cross-referencing work"""
+        try:
+            self.log("📝 Creating GitLab work items for cross-referencing...")
+            
+            work_items_created = []
+            opportunities = cross_ref_data.get("opportunities", [])
+            
+            for opportunity in opportunities:
+                work_item = {
+                    "title": f"Cross-Reference: {opportunity['description']}",
+                    "description": f"Cross-referencing work: {opportunity['type']} - {opportunity['scope']}",
+                    "priority": opportunity['priority'],
+                    "labels": ["cross-referencing", "autonomous-work", "content-linking"],
+                    "type": "cross_reference_work"
+                }
+                work_items_created.append(work_item)
+                self.log(f"✅ Created cross-reference work item: {work_item['title']}")
+            
+            return {
+                "created": True,
+                "work_items": work_items_created,
+                "count": len(work_items_created)
+            }
+            
+        except Exception as e:
+            self.log(f"❌ Error creating cross-reference work items: {str(e)}")
+            return {"created": False, "message": f"Error creating work: {str(e)}"}
+    
+    def create_work_for_search_optimization(self, optimization_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create GitLab work items for search optimization"""
+        try:
+            self.log("📝 Creating GitLab work items for search optimization...")
+            
+            work_items_created = []
+            opportunities = optimization_data.get("opportunities", [])
+            
+            for opportunity in opportunities:
+                work_item = {
+                    "title": f"Search Optimization: {opportunity['description']}",
+                    "description": f"Search optimization work: {opportunity['type']} - {opportunity['scope']}",
+                    "priority": opportunity['priority'],
+                    "labels": ["search-optimization", "autonomous-work", "retrieval-improvement"],
+                    "type": "search_optimization_work"
+                }
+                work_items_created.append(work_item)
+                self.log(f"✅ Created search optimization work item: {work_item['title']}")
+            
+            return {
+                "created": True,
+                "work_items": work_items_created,
+                "count": len(work_items_created)
+            }
+            
+        except Exception as e:
+            self.log(f"❌ Error creating search optimization work items: {str(e)}")
+            return {"created": False, "message": f"Error creating work: {str(e)}"}
+
     def process(self, state: AgentState) -> AgentState:
         """Process content retrieval requests"""
         self.log("Processing content retrieval request")

@@ -42,10 +42,12 @@ class SupervisorAgent(BaseAgent):
         but should not create, modify, or delete any content. All content 
         operations are handled by the content_agent_swarm.
         """
-        all_kb_tools = self.kb_tools.get_tools()
+        all_kb_tools = self.kb_tools.tools()
         
-        # Only include read-only tools for oversight and coordination
+        # Only include read-only tools for oversight and coordination, plus done workflow tools
         readonly_tool_names = [
+            "KnowledgeBaseSetContext",                  # Needed for KB context establishment
+            "KnowledgeBaseSetContextByGitLabProject",   # CRITICAL: Needed for GitLab-to-KB context establishment
             "KnowledgeBaseGetKnowledgeBases",           # List all KBs
             "KnowledgeBaseGetRootLevelArticles",        # View KB content structure
             "KnowledgeBaseGetArticleHierarchy",         # View content organization
@@ -56,6 +58,9 @@ class SupervisorAgent(BaseAgent):
             "KnowledgeBaseGetTagsForArticle",           # View article tags
             "KnowledgeBaseGetArticlesForTag",           # Search by tags
             "KnowledgeBaseGetTagsWithUsageCount",       # Content analytics
+            # Done workflow management tools (Supervisor manages completion workflow)
+            "KnowledgeBaseHandleDoneStatus",            # Handle KB completion workflow
+            "KnowledgeBaseCheckDoneWorkflow",           # Check for completed KBs needing GitLab projects
         ]
         
         # Filter to only include read-only tools
@@ -74,12 +79,13 @@ class SupervisorAgent(BaseAgent):
 - **UserProxy Agent**: Direct bidirectional communication for user collaboration and status updates
 - **ContentManagement Agent**: Direct bidirectional communication for operational coordination and work delegation
 - **Other Agents**: NO direct communication - coordinate only through GitLab issues, projects, and workflows
+- **Agent Questions/Clarifications**: All agents use GitLab issue comments to ask questions and communicate with each other
 
 **SCRUM MASTER ROLE - GITLAB-CENTRIC FACILITATION:**
 You function as the team's Scrum Master, facilitating agile workflows through GitLab:
 - ContentPlanner, ContentCreator, ContentReviewer, and ContentRetrieval agents work autonomously through GitLab
-- These agents discover their work by checking GitLab for assigned issues
-- You coordinate them by creating GitLab issues, milestones, and project structures
+- These agents scan for and self-select work items that match their capabilities and focus areas
+- You coordinate them by creating GitLab issues, milestones, and project structures for them to discover
 - You facilitate sprint planning, daily standups, and retrospectives through GitLab workflows
 - You remove blockers and impediments for the content agent team through GitLab
 - You evaluate work streams and team velocity through GitLab metrics
@@ -168,6 +174,33 @@ For coordination and oversight purposes, you have read-only access to KB data:
 - **NO Deletion**: You cannot delete any KB content or structures
 - **Delegation Only**: All content operations must be delegated to content_agent_swarm
 
+**KNOWLEDGE BASE COMPLETION WORKFLOW:**
+You have special responsibility for managing the knowledge base completion workflow:
+
+**When Knowledge Bases Are Marked as 'Done':**
+1. **Automatic Detection**: Monitor for knowledge bases with status = 'done'
+2. **GitLab Project Creation**: Use KnowledgeBaseHandleDoneStatus to create GitLab projects for completed KBs
+3. **Collaboration Setup**: Ensure completed KBs have proper GitLab infrastructure for ongoing maintenance
+4. **Team Notification**: Inform relevant stakeholders about newly completed knowledge bases
+
+**Done Workflow Tools Available:**
+- **KnowledgeBaseHandleDoneStatus**: Create GitLab project for a specific completed KB
+- **KnowledgeBaseCheckDoneWorkflow**: Scan for completed KBs needing GitLab projects
+
+**Completion Workflow Best Practices:**
+- **Proactive Monitoring**: Regularly check for completed KBs without GitLab projects
+- **Immediate Action**: Create GitLab projects promptly when KBs are marked as done
+- **Stakeholder Communication**: Notify teams when KBs are ready for collaboration
+- **Project Setup**: Ensure proper issues, milestones, and workflows are created
+- **Handoff Coordination**: Facilitate smooth transition from development to maintenance phase
+
+**Post-Completion Management:**
+Once a KB is marked as 'done' and has a GitLab project:
+- Monitor ongoing maintenance activities through GitLab issues
+- Coordinate improvements, updates, and enhancement requests
+- Track usage metrics and feedback collection
+- Facilitate collaboration between users and maintenance teams
+
 **BEST PRACTICES:**
 - Focus on facilitating team success rather than directing individual work
 - Use data-driven insights from GitLab metrics to guide process improvements
@@ -180,6 +213,7 @@ For coordination and oversight purposes, you have read-only access to KB data:
 - **To ContentManagement**: Direct communication for operational coordination and work delegation
 - **For Content Operations**: ALWAYS delegate to content_agent_swarm via ContentManagement - never perform content operations directly
 - **To Other Agents**: NO direct communication - coordinate only through GitLab issues, projects, and assignments
+- **Agent Questions & Clarifications**: All agents use GitLab issue comments to ask questions and communicate with each other
 - **Cross-functional**: Coordinate with other systems and stakeholders through GitLab workflows
 
 **DELEGATION WORKFLOW FOR CONTENT OPERATIONS:**
@@ -273,10 +307,8 @@ Provide your assessment:
 - **User Response**: How should this be presented to the user?
         """
         
-        messages = [
-            self.get_system_message(),
-            HumanMessage(content=review_prompt)
-        ]
+        messages = self.get_messages_with_history(state)
+        messages.append(HumanMessage(content=review_prompt))
         
         response = self.llm.invoke(messages)
         review_result = response.content
@@ -746,7 +778,7 @@ Provide your assessment:
         
         return state
     
-    def _analyze_and_plan(self, request_message: AgentMessage) -> Dict[str, Any]:
+    def _analyze_and_plan(self, request_message: AgentMessage, state: AgentState = None) -> Dict[str, Any]:
         """Analyze the request and create a workflow plan"""
         user_intent = request_message.metadata.get("intent", "general_inquiry")
         content = request_message.content
@@ -769,10 +801,11 @@ Create a workflow plan that includes:
 Respond with a clear plan for the Content Management Agent.
         """
         
-        messages = [
-            self.get_system_message(),
-            HumanMessage(content=analysis_prompt)
-        ]
+        if state:
+            messages = self.get_messages_with_history(state)
+        else:
+            messages = [self.get_system_message()]
+        messages.append(HumanMessage(content=analysis_prompt))
         
         response = self.llm.invoke(messages)
         plan_content = response.content

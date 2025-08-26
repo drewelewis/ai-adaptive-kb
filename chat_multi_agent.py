@@ -236,6 +236,55 @@ class SimplifiedMultiAgentChat:
             }
         }
 
+    def create_knowledge_base_interactive(self) -> str:
+        """Interactive knowledge base creation through the chat system."""
+        try:
+            print("📝 Let's create a new Knowledge Base!")
+            
+            # Get KB details from user
+            kb_name = input("📚 Enter Knowledge Base name: ").strip()
+            if not kb_name:
+                return "❌ Knowledge Base name is required."
+            
+            kb_description = input("📄 Enter Knowledge Base description: ").strip()
+            if not kb_description:
+                return "❌ Knowledge Base description is required."
+            
+            create_gitlab = input("🔗 Create GitLab project? (y/n, default: y): ").strip().lower()
+            create_gitlab_project = create_gitlab in ['', 'y', 'yes']
+            
+            # Create the KB creation command
+            kb_creation_command = f"Create a knowledge base titled '{kb_name}' with description '{kb_description}'"
+            if create_gitlab_project:
+                kb_creation_command += " and create a GitLab project for it"
+            
+            print(f"🚀 Processing KB creation: {kb_creation_command}")
+            
+            # Process through the agent system
+            response = self.process_user_message(kb_creation_command)
+            return response
+            
+        except Exception as e:
+            return f"❌ Error creating Knowledge Base: {e}"
+
+    def list_knowledge_bases(self) -> str:
+        """List all knowledge bases through the agent system."""
+        try:
+            list_command = "Show me all available knowledge bases with their details"
+            response = self.process_user_message(list_command)
+            return response
+        except Exception as e:
+            return f"❌ Error listing Knowledge Bases: {e}"
+
+    def set_knowledge_base_context(self, kb_id: str) -> str:
+        """Set knowledge base context through the agent system."""
+        try:
+            context_command = f"Set knowledge base context to KB ID {kb_id}"
+            response = self.process_user_message(context_command)
+            return response
+        except Exception as e:
+            return f"❌ Error setting KB context: {e}"
+
 def main():
     print("=" * 80)
     print("🔥 AI ADAPTIVE KNOWLEDGE BASE - SIMPLIFIED MULTI-AGENT CHAT")
@@ -280,6 +329,9 @@ def main():
     print("=" * 80)
     print("💬 Commands:")
     print("   • Type your question or command to interact with the AI")
+    print("   • Type '/kb create' to create a new knowledge base interactively")
+    print("   • Type '/kb list' to list all knowledge bases")
+    print("   • Type '/kb set <id>' to set context to a specific knowledge base")
     print("   • Type '/agents' to show agent status")
     print("   • Type '/session' to show session summary")
     print("   • Type '/reset' or '/r' to clear conversation state")
@@ -322,6 +374,37 @@ def main():
                         else:
                             print(f"   {key}: {value}")
                 continue
+            
+            # Handle KB creation commands
+            elif user_input.lower().startswith("/kb"):
+                kb_command = user_input.lower().strip()
+                
+                if kb_command == "/kb create":
+                    print("🔧 Creating Knowledge Base Interactively...")
+                    kb_result = chat_system.create_knowledge_base_interactive()
+                    print(f"✅ KB Creation Result: {kb_result}")
+                    continue
+                    
+                elif kb_command == "/kb list":
+                    print("📚 Listing Knowledge Bases...")
+                    kb_list = chat_system.list_knowledge_bases()
+                    print(f"📋 Knowledge Bases: {kb_list}")
+                    continue
+                    
+                elif kb_command.startswith("/kb set"):
+                    parts = kb_command.split()
+                    if len(parts) >= 3:
+                        kb_id = parts[2]
+                        print(f"🎯 Setting KB context to ID: {kb_id}")
+                        kb_context = chat_system.set_knowledge_base_context(kb_id)
+                        print(f"✅ KB Context Result: {kb_context}")
+                    else:
+                        print("❌ Usage: /kb set <id>")
+                    continue
+                    
+                else:
+                    print("❌ Unknown KB command. Available: /kb create, /kb list, /kb set <id>")
+                    continue
             
             # Process normal user input through simplified system
             print("🚀 Processing through UserProxy → Supervisor...")

@@ -4,23 +4,23 @@
 
 **The system now provides fully autonomous content generation through Content Management Agent prescriptive workflow orchestration.**
 
-The enhanced workflow eliminates manual bottlenecks by empowering the Content Management Agent to automatically create comprehensive content work item pipelines when "Define KB" gates are closed.
+The enhanced workflow eliminates manual bottlenecks by empowering the Content Management Agent to automatically create comprehensive content work item pipelines when GitLab projects become available.
 
 ## ⚡ Prescriptive Automation Solution
 
 ### Content Management Agent's New Role:
-- **Gate Monitoring**: Automatically detects when "Define KB: [KB Name]" work items are closed
+- **Project Monitoring**: Automatically detects when GitLab projects become available for knowledge bases
 - **Prescriptive Workflow Creation**: Automatically creates complete content work item pipelines
 - **Autonomous Trigger Authority**: Eliminates the need for manual work item creation after gate closure
 - **Workflow Orchestration**: Defines standardized approaches that other agents autonomously execute
 
-## 🚪 Enhanced "Define KB" Gate Process
+## � Enhanced GitLab Project Process
 
-1. **Supervisor creates "Define KB: [KB Name]" work item** (state: opened)
+1. **Supervisor creates "KB Setup: [KB Name]" work item** (state: opened)
 2. **Content agents contribute planning input** through comments and suggestions
 3. **Human stakeholders provide feedback** and requirements clarification
 4. **KB definition is finalized** with clear scope and structure
-5. **Human closes "Define KB" work item** (state: closed) ← **AUTONOMOUS TRIGGER POINT**
+5. **GitLab project becomes available** ← **AUTONOMOUS TRIGGER POINT**
 6. **🚀 Content Management Agent automatically creates content pipeline** 
    - Research work items → ContentRetrieval
    - Planning work items → ContentPlanner
@@ -50,12 +50,12 @@ Content Agent Swarm → Discovers and executes supervisor-created work items
 
 ## Supervisor Responsibilities
 
-### 1. Immediate "Define KB" Work Item Creation
-- Upon receiving KB handoff from UserProxy, the Supervisor **MUST** create a "Define KB" work item
+### 1. Immediate "KB Setup" Work Item Creation
+- Upon receiving KB handoff from UserProxy, the Supervisor **MUST** create a "KB Setup" work item
 - This is the **FIRST ACTION** required after handoff reception
-- **Use standardized naming convention**: "Define KB: [KB Name]"
-- This work item serves as a **MANDATORY GATE** for all content creation
-- Content agents can contribute input but **CANNOT create content** until this work item is **CLOSED**
+- **Use standardized naming convention**: "KB Setup: [KB Name]"
+- This work item serves as **PROJECT COORDINATION** for all content creation
+- Content agents can create content immediately when GitLab projects are available
 - Work item must include all available KB details, requirements, and context
 
 ### 2. Work Item Content Requirements

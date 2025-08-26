@@ -39,6 +39,7 @@ from .agent_types import AgentState
 from .content_planner_agent import ContentPlannerAgent
 from .content_creator_agent import ContentCreatorAgent
 from .content_reviewer_agent import ContentReviewerAgent
+from .content_retrieval_agent import ContentRetrievalAgent
 
 # Import PostgreSQL state manager
 from .postgresql_state_manager import PostgreSQLStateManager
@@ -86,6 +87,7 @@ class Orchestrator:
         self.content_planner = ContentPlannerAgent(self.llm)
         self.content_creator = ContentCreatorAgent(self.llm)
         self.content_reviewer = ContentReviewerAgent(self.llm)
+        self.content_retrieval = ContentRetrievalAgent(self.llm)
         
         # Initialize knowledge base operations
         self.kb_ops = KnowledgeBaseOperations()
@@ -96,7 +98,7 @@ class Orchestrator:
         
         print("🤖 Autonomous Content Creation System initialized!")
         print("Agents loaded: UserProxy, Supervisor, ContentManagement")
-        print("Content Creation: ContentPlanner, ContentCreator, ContentReviewer")
+        print("Content Creation: ContentPlanner, ContentCreator, ContentReviewer, ContentRetrieval")
         print("State management: PostgreSQL with ACID transactions")
         
         # Initialize session if needed
@@ -120,10 +122,40 @@ class Orchestrator:
                     # Format knowledge base list for display
                     kb_list = ", ".join([f"{kb['name']} (ID: {kb['id']})" for kb in knowledge_bases])
                     print(f"📚 Available knowledge bases: {kb_list}")
-                    # Use the first available knowledge base ID
-                    kb_id = knowledge_bases[0]["id"]
-                    kb_name = knowledge_bases[0]["name"]
-                    print(f"🎯 Auto-selecting knowledge base: {kb_name} (ID: {kb_id})")
+                    
+                    # Check for configured default KB ID first
+                    default_kb_id = os.getenv('DEFAULT_KNOWLEDGE_BASE_ID')
+                    target_kb = None
+                    
+                    if default_kb_id:
+                        try:
+                            default_kb_id = int(default_kb_id)
+                            # Find the configured KB
+                            target_kb = next((kb for kb in knowledge_bases if kb['id'] == default_kb_id), None)
+                            if target_kb:
+                                print(f"🎯 Using configured default knowledge base: {target_kb['name']} (ID: {default_kb_id})")
+                            else:
+                                print(f"⚠️  Configured DEFAULT_KNOWLEDGE_BASE_ID={default_kb_id} not found, falling back to auto-selection")
+                        except (ValueError, TypeError):
+                            print(f"⚠️  Invalid DEFAULT_KNOWLEDGE_BASE_ID value: {default_kb_id}, using auto-selection")
+                    
+                    # If no valid configured KB, use previous auto-selection logic
+                    if not target_kb:
+                        # FALLBACK: Select KB 13 (Inflation-Proof Family Finances) which has our content
+                        # instead of auto-selecting the first KB which is always KB 11
+                        for kb in knowledge_bases:
+                            if kb['id'] == 13 or 'Inflation-Proof' in kb['name']:
+                                target_kb = kb
+                                break
+                        
+                        if target_kb:
+                            print(f"🎯 Auto-selecting preferred knowledge base: {target_kb['name']} (ID: {target_kb['id']})")
+                        else:
+                            # Final fallback to first KB
+                            target_kb = knowledge_bases[0]
+                            print(f"🎯 Auto-selecting first available knowledge base: {target_kb['name']} (ID: {target_kb['id']})")
+                    
+                    kb_id = target_kb["id"]
                 
                 # Update session with selected knowledge base ID (not name!)
                 self.state_manager.update_session_context(
