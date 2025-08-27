@@ -374,42 +374,12 @@ class AutonomousAgentSwarm:
                         try:
                             safe_print(f"    🚀 Executing work...")
                             logger.debug(f"DEBUG: About to execute work for {agent_name}")
-                            
-                            # NEW STANDARDIZED EXECUTION: Agents handle their own work through process() method
-                            # The work discovery already set up the agent's internal state for GitLab work
-                            # So we just need to call the agent's process method with a basic state
-                            work_state = AgentState(
-                                current_kb_id=getattr(self.orchestrator, 'knowledge_base_id', '1'),
-                                agent_username=agent_name.replace("Agent", "").lower()
-                            )
-                            
-                            # Get the appropriate agent
-                            if agent_name == "ContentManagementAgent":
-                                agent = self.orchestrator.content_manager
-                            elif agent_name == "ContentPlannerAgent":
-                                agent = self.orchestrator.content_planner
-                            elif agent_name == "ContentCreatorAgent":
-                                agent = self.orchestrator.content_creator
-                            elif agent_name == "ContentReviewerAgent":
-                                agent = self.orchestrator.content_reviewer
-                            elif agent_name == "ContentRetrievalAgent":
-                                agent = self.orchestrator.content_retrieval
-                            elif agent_name == "SupervisorAgent":
-                                agent = self.orchestrator.supervisor
+                            execution_result = self._execute_agent_work(agent_name, work_result)
+                            logger.debug(f"DEBUG: Execution result for {agent_name}: {execution_result}")
+                            if execution_result.get("success", False):
+                                safe_print(f"    ✅ Work completed: {execution_result.get('summary', 'Content created successfully')}")
                             else:
-                                safe_print(f"    ❌ Unknown agent: {agent_name}")
-                                continue
-                            
-                            # Execute using standardized process method
-                            result_state = agent.process(work_state)
-                            
-                            if result_state:
-                                safe_print(f"    ✅ Work completed successfully")
-                                logger.debug(f"DEBUG: {agent_name} completed work successfully")
-                            else:
-                                safe_print(f"    ⚠️  Work execution returned empty state")
-                                logger.debug(f"DEBUG: {agent_name} returned empty state")
-                                
+                                safe_print(f"    ⚠️  Work execution had issues: {execution_result.get('error', 'Unknown error')}")
                         except Exception as exec_error:
                             logger.error(f"❌ Work execution error for {agent_name}: {str(exec_error)}", exc_info=True)
                             safe_print(f"    ❌ Execution failed: {str(exec_error)[:50]}...")
@@ -498,86 +468,36 @@ class AutonomousAgentSwarm:
                 "message": f"Work discovery error: {str(e)}"
             }
     
-    def _call_content_creator_work_discovery(self) -> Dict[str, Any]:
-        """Direct work discovery for ContentCreatorAgent - Use agent's own GitLab scanning"""
-        try:
-            # Let the agent handle its own work discovery using its new scanning methods
-            agent = self.orchestrator.content_creator
-            
-            # Create a minimal state for the agent
-            work_state = AgentState(
-                current_kb_id=getattr(self.orchestrator, 'knowledge_base_id', '1'),
-                agent_username="content-creator-agent"
-            )
-            
-            # Check assigned work first
-            assigned_work = agent._scan_assigned_gitlab_work()
-            if assigned_work.get("found_work", False):
-                return assigned_work
-            
-            # Then check available work
-            available_work = agent._scan_available_gitlab_work()
-            if available_work.get("found_work", False):
-                return available_work
-            
-            # Fallback to autonomous content gap analysis
-            return agent.analyze_content_gaps(work_state)
-        except Exception as e:
-            return {"found_work": False, "message": f"Error: {str(e)}"}
-
     def _call_content_planner_work_discovery(self) -> Dict[str, Any]:
-        """Direct work discovery for ContentPlannerAgent - Use agent's own GitLab scanning"""
+        """Direct work discovery for ContentPlannerAgent - GitLab issues first, then content gaps"""
         try:
-            # Let the agent handle its own work discovery using its new scanning methods
-            agent = self.orchestrator.content_planner
-            
-            # Create a minimal state for the agent
-            work_state = AgentState(
-                current_kb_id=getattr(self.orchestrator, 'knowledge_base_id', '1'),
-                agent_username="content-planner-agent"
-            )
-            
-            # Check assigned work first
-            assigned_work = agent._scan_assigned_gitlab_work()
-            if assigned_work.get("found_work", False):
-                return assigned_work
-            
-            # Then check available work
-            available_work = agent._scan_available_gitlab_work()
-            if available_work.get("found_work", False):
-                return available_work
+            # First check GitLab for existing issues this agent can work on
+            work_result = self._discover_agent_work("content-planner-agent", ["planning", "architecture", "strategy", "design", "kb-plan"])
+            if work_result.get("found_work", False):
+                return work_result
             
             # Fallback to autonomous content gap analysis
-            return agent.analyze_content_gaps(work_state)
+            return self.orchestrator.content_planner.analyze_content_gaps()
         except Exception as e:
             return {"found_work": False, "message": f"Error: {str(e)}"}
-
+    
+    def _call_content_creator_work_discovery(self) -> Dict[str, Any]:
+        """Direct work discovery for ContentCreatorAgent - GitLab issues first, then content gaps"""
+        try:
+            # First check GitLab for existing issues this agent can work on
+            work_result = self._discover_agent_work("content-creator-agent", ["content-creation", "content-generation", "development", "writing", "create"])
+            if work_result.get("found_work", False):
+                return work_result
+            
+            # Fallback to autonomous content gap analysis
+            return self.orchestrator.content_creator.analyze_content_gaps()
+        except Exception as e:
+            return {"found_work": False, "message": f"Error: {str(e)}"}
+    
     def _call_content_reviewer_work_discovery(self) -> Dict[str, Any]:
-        """Direct work discovery for ContentReviewerAgent - Use agent's own GitLab scanning"""
+        """Direct work discovery for ContentReviewerAgent - GitLab issues first, then content gaps"""
         try:
-            # Let the agent handle its own work discovery using its new scanning methods
-            agent = self.orchestrator.content_reviewer
-            
-            # Create a minimal state for the agent
-            work_state = AgentState(
-                current_kb_id=getattr(self.orchestrator, 'knowledge_base_id', '1'),
-                agent_username="content-reviewer-agent"
-            )
-            
-            # Check assigned work first
-            assigned_work = agent._scan_assigned_gitlab_work()
-            if assigned_work.get("found_work", False):
-                return assigned_work
-            
-            # Then check available work
-            available_work = agent._scan_available_gitlab_work()
-            if available_work.get("found_work", False):
-                return available_work
-            
-            # Fallback to autonomous content gap analysis
-            return agent.analyze_content_gaps(work_state)
-        except Exception as e:
-            return {"found_work": False, "message": f"Error: {str(e)}"}
+            # First check GitLab for existing issues this agent can work on
             work_result = self._discover_agent_work("content-reviewer-agent", ["review", "qa", "quality-assurance", "quality-review", "validation"])
             if work_result.get("found_work", False):
                 return work_result
@@ -764,7 +684,7 @@ class AutonomousAgentSwarm:
             return {"success": False, "error": f"Execution error: {str(e)}"}
     
     def _execute_gitlab_issue_work(self, agent, work_item: Dict[str, Any], agent_name: str) -> Dict[str, Any]:
-        """Execute work for a GitLab issue using standardized agent entry points"""
+        """Execute work for a GitLab issue"""
         try:
             issue_id = work_item.get("iid")
             issue_title = work_item.get("title", "")
@@ -772,44 +692,122 @@ class AutonomousAgentSwarm:
             
             print(f"DEBUG: Executing GitLab issue #{issue_id}: {issue_title}")
             
-            # Create a work state for the execution
+            # Create a work item structure that the agent can understand
+            gitlab_work = {
+                "type": "gitlab_issue",
+                "description": f"GitLab Issue #{issue_id}: {issue_title}",
+                "gitlab_issue": work_item,
+                "priority": "high",  # GitLab issues are high priority
+                "scope": "gitlab_integration"
+            }
+            
+            # Create a minimal state for the execution
             work_state = AgentState(
                 current_kb_id=project_id,
                 kb_project_id=project_id,
-                agent_username=agent_name.replace("Agent", "").lower()
+                agent_username=agent_name.replace("Agent", "").lower(),
+                agent_messages=[],  # Initialize agent_messages to prevent KeyError
+                messages=[],  # Initialize messages list
+                current_agent=agent_name,
+                recursions=0
             )
             
-            # STANDARDIZED EXECUTION: All agents use their process() method
-            print(f"DEBUG: Calling standardized process() method for {agent_name}")
+            # Route to appropriate agent execution method based on agent type
+            print(f"DEBUG: Executing work for {agent_name} with work_item: {work_item}")
             
+            # Try to execute the agent work with enhanced error handling
             try:
-                # All agents now use the standardized process() method
-                result = agent.process(work_state)
-                
-                print(f"DEBUG: Agent {agent_name} execution completed")
-                
-                # Process method returns AgentState, so we need to extract success info
-                if result:
-                    return {
-                        "success": True,
-                        "summary": f"Successfully executed GitLab issue #{issue_id} using standardized process method",
-                        "details": {"state_returned": True, "agent_name": agent_name}
-                    }
+                if agent_name == "ContentCreatorAgent":
+                    if hasattr(agent, 'process_gitlab_assignment'):
+                        print(f"DEBUG: Calling process_gitlab_assignment for {agent_name}")
+                        # Use GitLab-specific processing method
+                        result = agent.process_gitlab_assignment(
+                            str(work_item.get("iid")), 
+                            str(work_item.get("project_id"))
+                        )
+                    else:
+                        print(f"DEBUG: Calling process for {agent_name} (no process_gitlab_assignment)")
+                        # Fallback: use the main process method with work state
+                        result = agent.process(work_state)
+                        
+                elif agent_name == "ContentPlannerAgent":
+                    if hasattr(agent, 'process_gitlab_assignment'):
+                        print(f"DEBUG: Calling process_gitlab_assignment for {agent_name}")
+                        result = agent.process_gitlab_assignment(
+                            str(work_item.get("iid")), 
+                            str(work_item.get("project_id"))
+                        )
+                    else:
+                        print(f"DEBUG: Calling process for {agent_name} (no process_gitlab_assignment)")
+                        result = agent.process(work_state)
+                        
+                elif agent_name == "ContentReviewerAgent":
+                    if hasattr(agent, 'process_gitlab_assignment'):
+                        print(f"DEBUG: Calling process_gitlab_assignment for {agent_name}")
+                        result = agent.process_gitlab_assignment(
+                            str(work_item.get("iid")), 
+                            str(work_item.get("project_id"))
+                        )
+                    else:
+                        print(f"DEBUG: Calling process for {agent_name} (no process_gitlab_assignment)")
+                        result = agent.process(work_state)
+                        
+                elif agent_name == "ContentRetrievalAgent":
+                    if hasattr(agent, 'process_gitlab_assignment'):
+                        print(f"DEBUG: Calling process_gitlab_assignment for {agent_name}")
+                        result = agent.process_gitlab_assignment(
+                            str(work_item.get("iid")), 
+                            str(work_item.get("project_id"))
+                        )
+                    else:
+                        print(f"DEBUG: Calling process for {agent_name} (no process_gitlab_assignment)")
+                        result = agent.process(work_state)
+                        
                 else:
-                    return {
-                        "success": False,
-                        "error": f"Agent {agent_name} process method returned None or empty result"
-                    }
+                    print(f"DEBUG: Calling generic process for {agent_name}")
+                    # Generic processing for other agents
+                    result = agent.process(work_state)
                     
+                print(f"DEBUG: Agent {agent_name} execution completed, result: {result}")
+                
             except Exception as agent_exception:
                 print(f"DEBUG: Exception during {agent_name} execution: {agent_exception}")
                 import traceback
                 traceback.print_exc()
-                return {
+                result = {
                     "success": False,
                     "error": f"Agent execution exception: {str(agent_exception)}"
                 }
             
+            # Enhanced error logging and result analysis
+            print(f"DEBUG: Raw result from {agent_name}: {result}")
+            print(f"DEBUG: Result type: {type(result)}")
+            
+            if result and result.get("success", False):
+                return {
+                    "success": True,
+                    "summary": f"Successfully executed GitLab issue #{issue_id}",
+                    "details": result
+                }
+            else:
+                # Extract detailed error information
+                error_detail = "Unknown error"
+                if result:
+                    if isinstance(result, dict):
+                        error_detail = result.get('error', 'No error field in result')
+                        print(f"DEBUG: Full result dict for {agent_name}: {result}")
+                    else:
+                        error_detail = f"Result is not a dict, type: {type(result)}, value: {str(result)[:200]}"
+                else:
+                    error_detail = "Result is None or empty"
+                
+                print(f"DEBUG: Detailed error for {agent_name}: {error_detail}")
+                
+                return {
+                    "success": False,
+                    "error": f"Failed to execute GitLab issue #{issue_id}: {error_detail}"
+                }
+                
         except Exception as e:
             print(f"DEBUG: Exception in _execute_gitlab_issue_work: {e}")
             import traceback

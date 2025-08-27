@@ -9,6 +9,7 @@ from tools.knowledge_base_tools import KnowledgeBaseTools
 from tools.gitlab_tools import GitLabTools
 from prompts.knowledge_base_prompts import prompts as kb_prompts
 from prompts.multi_agent_prompts import prompts as ma_prompts
+from prompts.foundational_prompts import AgentSpecificFoundations
 
 # Ensure environment variables are loaded for database connectivity
 from dotenv import load_dotenv
@@ -23,15 +24,15 @@ class ContentManagementAgent(BaseAgent):
     """
     
     def __init__(self, llm: AzureChatOpenAI):
-        # Combine base KB prompts with specialized multi-agent prompts
-        base_prompt = kb_prompts.master_prompt()
+        # Use shared foundational approach combined with specialized multi-agent prompts
+        foundational_prompt = AgentSpecificFoundations.content_management_foundation()
         specialized_prompt = ma_prompts.content_management_prompt()
         gitlab_integration_prompt = self._create_gitlab_integration_prompt()
         
-        super().__init__("ContentManagementAgent", llm, base_prompt)
+        super().__init__("ContentManagementAgent", llm, foundational_prompt)
         
         # Enhanced system prompt with GitLab integration
-        self.system_prompt = f"{base_prompt}\n\n{specialized_prompt}\n\n{gitlab_integration_prompt}\n\n{self._get_agent_identity_prompt()}"
+        self.system_prompt = f"{foundational_prompt}\n\n{specialized_prompt}\n\n{gitlab_integration_prompt}\n\n{self._get_agent_identity_prompt()}"
         
         # Initialize knowledge base tools
         self.kb_tools = KnowledgeBaseTools()
@@ -159,14 +160,37 @@ You are fully autonomous and empowered to complete work items independently whil
         if supervisor_feedback:
             return self._handle_supervisor_feedback(supervisor_feedback, state)
         
+        # Check for direct user requests (backward compatibility)
+        agent_messages = state.get("agent_messages", [])
+        if "agent_messages" not in state:
+            state["agent_messages"] = []
+        my_messages = [msg for msg in agent_messages if msg.recipient in [self.name, "ContentManagement"]]
+        
+        if my_messages:
+            self.log(f"Found {len(my_messages)} messages for ContentManagement - processing latest")
+            # Handle direct workflow requests (fallback mode)
+            return self._handle_direct_workflow_request(my_messages[-1], state)
+        
         # AUTONOMOUS SWARMING MODE: Find and claim available work
         available_work = self._find_available_gitlab_work(state)
         
         if not available_work:
-            self.log("No available GitLab work items found - analyzing for content management opportunities")
-            # Look for content management opportunities and create new work items if needed
-            self._scan_for_management_opportunities(state)
-            return state
+            self.log("No available work items found in GitLab")
+            # Check if this is a direct retrieval request
+            last_message = state.get("messages", [])
+            if last_message:
+                last_user_msg = last_message[-1].content.lower()
+                # Detect knowledge base listing requests
+                kb_request_patterns = [
+                    "get all kbs", "get kbs", "list kbs", "show kbs", 
+                    "all knowledge bases", "knowledge bases", "get_knowledge_bases",
+                    "list knowledge bases", "show knowledge bases"
+                ]
+                
+                if any(pattern in last_user_msg for pattern in kb_request_patterns):
+                    return self._handle_direct_retrieval_request(state, last_user_msg)
+            
+            # Return to supervisor with no work found status
             no_work_response = self.create_message(
                 recipient="Supervisor",
                 message_type="status_update",
@@ -227,19 +251,6 @@ You are fully autonomous and empowered to complete work items independently whil
             state["current_agent"] = "Supervisor"
         
         return state
-    
-    def _scan_for_management_opportunities(self, state: AgentState) -> None:
-        """Scan for content management opportunities and create work items if needed"""
-        try:
-            self.log("🔍 Scanning for autonomous content management opportunities...")
-            
-            # This could analyze for management needs like structure assessment,
-            # content organization, workflow optimization, etc.
-            # For now, just log that no immediate management work was found
-            self.log("💡 No immediate management opportunities found - system appears well-managed")
-                
-        except Exception as e:
-            self.log(f"Error scanning for management opportunities: {str(e)}", "ERROR")
     
     def _handle_direct_retrieval_request(self, state: AgentState, request: str) -> AgentState:
         """Handle direct retrieval requests like getting knowledge bases"""
@@ -489,7 +500,7 @@ CRITICAL INSTRUCTIONS FOR CONTENT CREATION:
   * Then create sub-articles under the categories using KnowledgeBaseInsertArticle with appropriate parent_id
   * Use meaningful titles and comprehensive content for each article
   * Ensure proper hierarchical structure (categories as parent articles, topics as child articles)
-  * For example, if creating a category about a topic: create category first, then create specific articles under it
+  * For "Family Finance" category example: create category first, then create articles like "Family Budgeting", "Teaching Kids About Money", etc.
   * Always validate knowledge base context first before creating content
   * REQUIRED FIELDS for KnowledgeBaseInsertArticle tool:
     - title: Clear, descriptive title for the article/category
@@ -498,10 +509,10 @@ CRITICAL INSTRUCTIONS FOR CONTENT CREATION:
     - parent_id: Use null for main categories, or parent article ID for sub-articles
     - knowledge_base_id: Use the current knowledge base ID from state
   * DO NOT use KnowledgeBaseGetArticleHierarchy for creation - that's only for reading existing content
-  * EXAMPLE for creating a main category:
-    article={{"title": "[Topic Category Name]", "content": "Comprehensive guide covering all aspects of [topic area], including key concepts, best practices, and practical applications. This category serves as the foundation for organizing related content and provides overview information for the topic domain.", "author_id": 1, "parent_id": null, "knowledge_base_id": [current_kb_id]}}
-  * EXAMPLE for creating sub-article under a category:
-    article={{"title": "[Specific Topic Name]", "content": "Detailed information about [specific topic], including practical techniques, step-by-step guidance, and real-world applications. This content provides actionable insights and comprehensive coverage of the subject matter.", "author_id": 1, "parent_id": [parent_category_id], "knowledge_base_id": [current_kb_id]}}
+  * EXAMPLE for creating "Family Finance" category:
+    article={{"title": "Family Finance", "content": "Comprehensive guide covering all aspects of family financial planning, including budgeting for families, teaching children about money, saving for family goals, and managing household finances effectively. This category includes strategies for dual-income families, single-parent financial planning, and teaching financial literacy to children of all ages.", "author_id": 1, "parent_id": null, "knowledge_base_id": 1}}
+  * EXAMPLE for creating sub-article under Family Finance:
+    article={{"title": "Family Budgeting Strategies", "content": "Effective budgeting techniques specifically designed for families, including methods for tracking family expenses, allocating funds for children's needs, planning for family activities, and managing variable family income. Topics include envelope budgeting for families, zero-based budgeting with kids, and emergency fund planning for households.", "author_id": 1, "parent_id": [Family Finance category ID], "knowledge_base_id": 1}}
 
 CRITICAL INSTRUCTIONS FOR KNOWLEDGE BASE CONTEXT SETTING:
 - If intent is "set_knowledge_base_context":
@@ -673,10 +684,18 @@ IMPORTANT:
                     state.get("knowledge_base_id") or 
                     os.getenv('DEFAULT_KNOWLEDGE_BASE_ID', '13'))
             
-            # LLM-DRIVEN APPROACH: Let the AI analyze existing content and create what's needed
-            self.log(f"Using LLM-driven content creation for KB {kb_id} - no rigid structure requirements")
+            # FIRST: Assess knowledge base structure and create foundation work items if needed
+            self.log(f"Assessing knowledge base structure for KB {kb_id}...")
+            structure_assessment = self._assess_knowledge_base_structure(kb_id)
             
-            # Proceed directly with content creation - let LLM determine structure needs
+            # If foundation work is needed, prioritize that over content creation
+            if structure_assessment.get("needs_structure_work") or structure_assessment.get("needs_taxonomy_work"):
+                self.log("🚧 Foundation work required - deferring content creation until structure is established")
+                self.log(f"   Structure issues: {structure_assessment.get('hierarchy_issues', [])}")
+                self.log(f"   Taxonomy issues: {structure_assessment.get('taxonomy_issues', [])}")
+                return True  # Return success as we've created the necessary foundation work items
+            
+            # Only proceed with content creation if foundation is in place
             opportunity = opportunities[0]
             article_title = opportunity.get("description", "Strategic Content")
             priority = opportunity.get("priority", "medium")
@@ -2596,54 +2615,41 @@ Before I create this knowledge base, I'd like to gather some details to ensure i
         }
     
     def _generate_strategic_kb_description(self, kb_details: Dict[str, Any]) -> str:
-        """Generate strategic description for the knowledge base using actual KB context"""
-        domain = kb_details.get('domain', 'Knowledge Base')
+        """Generate strategic description for the knowledge base"""
+        domain = kb_details.get('domain', 'Personal Finance')
         purpose = kb_details.get('purpose', 'Educational resource')
-        target_audience = kb_details.get('target_audience', 'Learners and professionals')
+        target_audience = kb_details.get('target_audience', 'Working professionals')
         scope = kb_details.get('scope', 'Comprehensive strategies and best practices')
-        
-        # Get actual KB context if available
-        kb_context = self._get_kb_context_info(kb_details.get('kb_id'))
-        if kb_context:
-            domain = kb_context.get('name', domain)
-            kb_description = kb_context.get('description', scope)
-        else:
-            kb_description = scope
         
         description = f"""**Strategic Knowledge Base: {domain}**
 
 **Purpose & Vision:**
-{purpose} - This knowledge base serves as a comprehensive strategic resource designed to provide actionable insights and proven methodologies for {domain.lower()}.
+{purpose} - This knowledge base serves as a comprehensive strategic resource designed to provide actionable insights and proven methodologies for achieving financial independence before traditional retirement age.
 
 **Target Audience:**
-{target_audience} - Specifically designed for motivated individuals seeking to master the concepts and strategies covered in this knowledge base.
+{target_audience} - Specifically designed for motivated individuals in their working years who seek to optimize their financial strategies and achieve early retirement through disciplined planning and informed decision-making.
 
 **Content Strategy & Scope:**
-{kb_description} - This knowledge base encompasses a strategic framework covering essential aspects of the topic domain with comprehensive coverage from foundational principles to advanced techniques.
+{scope} - This knowledge base encompasses a complete strategic framework covering all essential aspects of early retirement planning, from foundational budgeting principles to advanced investment strategies and wealth preservation techniques.
+
+**Strategic Framework Elements:**
+• **Financial Foundation Building**: Core budgeting, debt elimination, and emergency fund strategies
+• **Investment Mastery**: Portfolio construction, asset allocation, and risk management for early retirement
+• **Income Optimization**: Career advancement, side hustles, and passive income development
+• **Tax Strategy**: Advanced tax planning and optimization for wealth accumulation
+• **Retirement Planning**: Withdrawal strategies, healthcare planning, and lifestyle design
+• **Wealth Preservation**: Estate planning, insurance strategies, and long-term wealth protection
 
 **Content Depth & Approach:**
-This knowledge base employs a strategic, actionable approach that combines theoretical understanding with practical implementation. Each topic is developed with clear step-by-step guidance, real-world examples, and measurable outcomes to ensure readers can immediately apply the concepts.
+This knowledge base employs a strategic, actionable approach that combines theoretical understanding with practical implementation. Each topic is developed with clear step-by-step guidance, real-world examples, and measurable outcomes to ensure readers can immediately apply the concepts to their own financial journey.
 
 **Value Proposition:**
-This knowledge base provides a cohesive, strategic approach specifically designed for mastering the subject matter. The content is structured to build progressively from basic concepts to advanced strategies, making it suitable for both beginners and those with existing knowledge.
+Unlike generic financial advice, this knowledge base provides a cohesive, strategic roadmap specifically designed for achieving financial freedom before age 60. The content is structured to build progressively from basic concepts to advanced strategies, making it suitable for both beginners and those with existing financial knowledge.
 
 **Publication Strategy:**
-Content is structured for multi-format publication including comprehensive resource development and website creation, ensuring maximum accessibility and user engagement across different learning preferences."""
+Content is structured for multi-format publication including comprehensive ebook development and website resource creation, ensuring maximum accessibility and user engagement across different learning preferences."""
 
         return description
-    
-    def _get_kb_context_info(self, kb_id):
-        """Get knowledge base context information"""
-        if not kb_id:
-            return None
-            
-        try:
-            if self.tools and hasattr(self.tools, 'get_knowledge_base_info'):
-                return self.tools.get_knowledge_base_info(kb_id)
-        except Exception as e:
-            self.log(f"Error getting KB context: {str(e)}", "ERROR")
-        
-        return None
     
     def _generate_strategic_tags(self, kb_details: Dict[str, Any]) -> str:
         """Generate strategic tags for the knowledge base"""
@@ -3063,10 +3069,7 @@ What knowledge base project would you like to start today?"""
         This method is called by the autonomous swarm to identify work.
         """
         try:
-            kb_id = work_state.get("knowledge_base_id")
-            if not kb_id:
-                self.log("No knowledge_base_id provided in work_state - cannot analyze gaps", "ERROR")
-                return []
+            kb_id = work_state.get("knowledge_base_id", "13")  # Default to KB 13
             
             # Get current KB structure assessment
             structure_assessment = self._assess_knowledge_base_structure(kb_id)
@@ -3109,7 +3112,7 @@ What knowledge base project would you like to start today?"""
             return available_work
             
         except Exception as e:
-            self.logger.error(f"Error analyzing KB gaps: {str(e)}")
+            self.log(f"Error analyzing KB gaps: {str(e)}", level="ERROR")
             return []
 
     def _execute_kb_work_to_completion(self, work_item: Dict[str, Any], work_state: Dict[str, Any]) -> Dict[str, Any]:
@@ -3121,7 +3124,7 @@ What knowledge base project would you like to start today?"""
             work_type = work_item.get("type")
             kb_id = work_item.get("kb_id")
             
-            self.logger.info(f"[ContentManagement] Executing {work_type} for KB {kb_id}")
+            self.log(f"[ContentManagement] Executing {work_type} for KB {kb_id}")
             
             if work_type == "structure_foundation":
                 return self._execute_structure_foundation_work(work_item, work_state)
@@ -3137,7 +3140,7 @@ What knowledge base project would you like to start today?"""
                 }
                 
         except Exception as e:
-            self.logger.error(f"Error executing KB work: {str(e)}")
+            self.log(f"Error executing KB work: {str(e)}", level="ERROR")
             return {
                 "success": False,
                 "error": str(e),

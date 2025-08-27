@@ -8,6 +8,7 @@ from tools.knowledge_base_tools import KnowledgeBaseTools
 from tools.gitlab_tools import GitLabTools
 from prompts.knowledge_base_prompts import prompts as kb_prompts
 from prompts.multi_agent_prompts import prompts as ma_prompts
+from prompts.foundational_prompts import AgentSpecificFoundations
 
 # Ensure environment variables are loaded for database connectivity
 from dotenv import load_dotenv
@@ -32,11 +33,11 @@ class ContentPlannerAgent(BaseAgent):
     """
     
     def __init__(self, llm: AzureChatOpenAI):
-        # Combine base KB prompts with specialized planning prompts
-        base_prompt = kb_prompts.master_prompt()
+        # Use shared foundational approach combined with specialized planning prompts
+        foundational_prompt = AgentSpecificFoundations.content_planning_foundation()
         specialized_prompt = self._get_planning_prompt()
         gitlab_integration_prompt = self._create_gitlab_integration_prompt()
-        system_prompt = f"{base_prompt}\n\n{specialized_prompt}\n\n{gitlab_integration_prompt}"
+        system_prompt = f"{foundational_prompt}\n\n{specialized_prompt}\n\n{gitlab_integration_prompt}"
         
         super().__init__("ContentPlanner", llm, system_prompt)
         
@@ -74,29 +75,7 @@ class ContentPlannerAgent(BaseAgent):
     def _create_gitlab_integration_prompt(self) -> str:
         """Create GitLab integration prompt for the content planner agent"""
         return """
-**AUTONOMOUS SWARMING WORK MODEL - GITLAB INTEGRATION:**
-
-You operate in an autonomous swarming model where you:
-- **SCAN FIRST**: Always look for existing GitLab work items that need content planning
-- **CLAIM WORK**: Find and claim available planning tasks before creating new ones
-- **EXECUTE**: Complete claimed work items efficiently and thoroughly  
-- **CREATE NEW**: Only create new work items if no existing work matches your capabilities
-- **CONTINUE SWARMING**: After completing work, immediately look for the next task
-
-**SWARMING WORKFLOW PRIORITY:**
-1. **🔍 SCAN**: Look for existing GitLab issues labeled with planning, strategy, taxonomy, structure
-2. **📋 CLAIM**: Comment "🤖 ContentPlannerAgent claiming this work item" and update to in-progress  
-3. **📊 EXECUTE**: Complete the planning task according to issue specifications
-4. **✅ COMPLETE**: Mark issue as completed with summary of planning work done
-5. **🔄 CONTINUE**: Immediately scan for next available work item
-
-**WORK DISCOVERY PRIORITIES:**
-- Issues labeled: planning, strategy, taxonomy, structure, categorization
-- Titles containing: "Plan:", "Taxonomy:", "Structure:", "Strategy:", "Organize:"
-- Descriptions mentioning: content strategy, knowledge base organization, hierarchical planning
-- Priority order: urgent > high > medium > low
-
-**STRATEGIC PLANNING & COORDINATION:**
+**GITLAB INTEGRATION - STRATEGIC PLANNING & COORDINATION:**
 
 You have comprehensive GitLab integration capabilities for strategic planning and agent coordination:
 
@@ -169,42 +148,6 @@ When engaging in strategic planning, consider the entire ecosystem of projects a
         Every planning decision must include clear KB context identification.
         Never mix planning between different knowledge bases.
         
-        🏗️ FOUNDATIONAL STRUCTURE CREATION PRIORITY:
-        When working with any knowledge base, you MUST establish foundational elements first:
-        
-        **ESSENTIAL TAXONOMY CREATION:**
-        1. **Article Categories** - Define 4-6 main topic areas that logically organize the knowledge domain
-        2. **Article Subcategories** - Create 2-4 subcategories under each main category for detailed organization
-        3. **Article Structure Templates** - Establish consistent formatting standards and content organization patterns
-        4. **Comprehensive Tagging System** - Develop 20-50 relevant tags covering skill levels, content types, specific topics, tools/technologies, and common use cases
-        
-        **STRUCTURE PLANNING WORKFLOW:**
-        - First analyze the knowledge domain to understand scope and logical divisions
-        - Create hierarchical category/subcategory structure that covers the full domain
-        - Establish article structure standards (formatting, sections, cross-referencing)
-        - Design comprehensive tag taxonomy before any content creation begins
-        - Plan content progression from foundational to advanced within each category
-        - Ensure balanced content distribution across all categories and subcategories
-        
-        **TAGGING SYSTEM REQUIREMENTS:**
-        - **Skill Level Tags**: beginner, intermediate, advanced, expert
-        - **Content Type Tags**: overview, how-to, reference, case-study, tutorial, guide
-        - **Domain-Specific Tags**: covering all major concepts, tools, methods in the knowledge area
-        - **Use Case Tags**: common applications and scenarios
-        - **Difficulty Tags**: basic, moderate, complex, specialized
-        
-        KNOWLEDGE BASE PURPOSE & STRATEGIC VISION:
-        Knowledge bases are strategic content repositories designed to collect and organize comprehensive information 
-        on specific topics. These foundations will later be repurposed for multiple content formats including:
-        - Marketing materials and campaigns
-        - E-books and digital publications  
-        - Blog articles and blog posts
-        - Educational content and courses
-        - White papers and industry reports
-        
-        Focus on building robust, comprehensive content architectures that serve as versatile foundations
-        for future content adaptation rather than immediate application needs.
-        
         MULTI-KB PLANNING PRINCIPLES:
         1. **KB Context Verification**: Always confirm which KB you're planning for before starting
         2. **Context-Specific Planning**: Tailor strategies to the specific KB's domain and audience
@@ -215,17 +158,13 @@ When engaging in strategic planning, consider the entire ecosystem of projects a
         Your core responsibilities:
         - Transform high-level ideas into detailed, comprehensive content strategies for specific KBs
         - Design optimal knowledge base structures and hierarchies tailored to each KB's domain
-        - Ensure complete domain coverage with expert-level depth for the target KB
         - Ask intelligent clarifying questions only when scope is truly unclear for the specific KB
         - Create publication-ready content frameworks that support multiple output formats
         
         Planning Philosophy:
-        - COMPREHENSIVE COVERAGE: Plan for complete domain mastery, not surface-level content
-        - EXPERT DEPTH: Design for in-depth, authoritative content that demonstrates true understanding
-        - LOGICAL STRUCTURE: Create intuitive hierarchies that guide readers from basics to advanced concepts
-        - FUTURE-READY ARCHITECTURE: Design structures that can be easily adapted for different content formats
         - AUTONOMOUS DECISION-MAKING: Make intelligent scope decisions based on domain analysis
         - MINIMAL CLARIFICATION: Only ask questions when absolutely necessary for scope determination
+        - FUTURE-READY ARCHITECTURE: Design structures that can be easily adapted for different content formats
         
         When receiving a KB creation request:
         1. Verify and confirm the target knowledge base context
@@ -235,295 +174,89 @@ When engaging in strategic planning, consider the entire ecosystem of projects a
         5. Identify all major topics, subtopics, and relationships specific to that KB
         6. Only ask clarifying questions if the scope is genuinely ambiguous for that KB
         7. Create a detailed implementation plan for ContentCreator with clear KB context
-        
-        Quality Standards:
-        - Create frameworks for expert-level, authoritative content
-        - Design for publication-ready output (ebooks, blogs, professional resources)
-        - Plan comprehensive coverage that leaves no critical knowledge gaps
-        - Structure content for logical progression from fundamentals to advanced topics
-        - Ensure content architecture supports multiple future repurposing scenarios
         """
     
     def process(self, state: AgentState) -> AgentState:
-        """Process planning in autonomous swarming mode"""
-        self.log("🔄 ContentPlannerAgent: Starting autonomous swarming cycle")
-        
+        """Process planning requests and create comprehensive content strategies"""
         # Increment recursion counter
         self.increment_recursions(state)
         
-        # STEP 1: Check for GitLab work assigned to this agent
-        self.log("1️⃣ SCANNING: Checking for assigned GitLab planning work items...")
-        assigned_work = self._scan_assigned_gitlab_work()
-        if assigned_work.get("found_work", False):
-            self.log("✅ Found assigned GitLab planning work - executing...")
-            return self._execute_gitlab_work(assigned_work, state)
+        # Check for messages from Supervisor
+        agent_messages = state.get("agent_messages", [])
+        my_messages = [msg for msg in agent_messages if msg.recipient == self.name]
         
-        # STEP 2: Scan for available GitLab work to claim
-        self.log("2️⃣ SCANNING: Looking for available GitLab planning work items to claim...")
-        available_work = self._scan_available_gitlab_work()
-        if available_work.get("found_work", False):
-            self.log("✅ Found claimable GitLab planning work - claiming and executing...")
-            return self._claim_and_execute_work(available_work, state)
+        if not my_messages:
+            self.log("No planning requests found")
+            return state
         
-        # STEP 3: Fallback to autonomous content planning analysis
-        self.log("3️⃣ AUTONOMOUS WORK: Scanning for content planning opportunities...")
-        content_gaps = self.analyze_content_gaps(state)
+        # Get the latest planning request
+        latest_request = my_messages[-1]
+        user_request = latest_request.content
         
-        if content_gaps.get("found_work", False):
-            self.log("✅ Created new planning work items - continuing swarming cycle")
+        self.log(f"Planning KB creation for: {user_request}")
+        
+        # Analyze request and create comprehensive plan
+        planning_result = self._create_content_strategy(user_request, state)
+        
+        # Determine next step based on planning result
+        if self._needs_clarification(planning_result):
+            # Send clarification request back to user via UserProxy
+            response_message = self.create_message(
+                recipient="UserProxy",
+                message_type="clarification_request",
+                content=planning_result["clarification_questions"],
+                metadata={
+                    "original_request": user_request,
+                    "planning_stage": "clarification_needed",
+                    "partial_plan": planning_result.get("partial_plan", {})
+                }
+            )
+            
+            # Route back to UserProxy for clarification
+            state["current_agent"] = "UserProxy"
+            
         else:
-            self.log("💡 No planning gaps found - KB structure appears well-planned")
+            # Send complete plan to ContentCreator
+            # Get KB ID from state (consistent field name)
+            kb_id = state.get('knowledge_base_id')
+            kb_info = state.get('created_kb_info', {})
+            
+            self.log(f"DEBUG: Using KB ID from state: {kb_id}")
+            
+            # Prepare the message content
+            message_content = "Content strategy complete. Proceeding with KB creation."
+            kb_notification = state.get("kb_context_notification")
+            if kb_notification:
+                message_content = f"{kb_notification}\n\n{message_content}"
+            
+            response_message = self.create_message(
+                recipient="ContentCreator",
+                message_type="content_creation_plan",
+                content=message_content,
+                metadata={
+                    "original_request": user_request,
+                    "content_strategy": planning_result["strategy"],
+                    "article_hierarchy": planning_result["hierarchy"],
+                    "implementation_plan": planning_result["implementation"],
+                    "kb_created": planning_result.get("kb_created"),
+                    "kb_id": kb_id,  # Pass the KB ID from state
+                    "kb_info": kb_info,
+                    "kb_context_notification": kb_notification
+                }
+            )
+            
+            self.log(f"DEBUG: Sending KB ID {kb_id} to ContentCreator via metadata")
+            
+            # Route to ContentCreator for implementation
+            state["current_agent"] = "ContentCreator"
         
-        self.log("🔄 CONTINUE SWARMING: Ready for next autonomous cycle")
+        # Add to agent messages
+        if "agent_messages" not in state:
+            state["agent_messages"] = []
+        state["agent_messages"].append(response_message)
+        
+        self.log("Content planning completed")
         return state
-
-    def _scan_assigned_gitlab_work(self) -> Dict[str, Any]:
-        """Scan for GitLab work items assigned to this agent"""
-        try:
-            self.log("🔍 Scanning for assigned GitLab planning work items...")
-            
-            if not self.is_gitlab_enabled():
-                return {"found_work": False, "message": "GitLab not configured"}
-            
-            gitlab_username = self.gitlab_info.get('gitlab_username', '')
-            if not gitlab_username:
-                return {"found_work": False, "message": "GitLab username not configured"}
-            
-            # Use GitLab tools to find assigned issues
-            assigned_issues_tool = next(
-                (tool for tool in self.tools if tool.name == "GitLabGetUserAssignedIssuesTool"), 
-                None
-            )
-            
-            if assigned_issues_tool:
-                try:
-                    result = assigned_issues_tool._run(username=gitlab_username)
-                    if result and isinstance(result, dict):
-                        issues = result.get("issues", [])
-                        if issues:
-                            # Filter for content planning related work
-                            planning_issues = [
-                                issue for issue in issues 
-                                if any(label in issue.get("labels", []) for label in 
-                                      ["planning", "architecture", "strategy", "design", "kb-plan"])
-                            ]
-                            if planning_issues:
-                                self.log(f"✅ Found {len(planning_issues)} assigned planning issues")
-                                return {
-                                    "found_work": True,
-                                    "work_type": "assigned_gitlab",
-                                    "work_items": planning_issues,
-                                    "message": f"Found {len(planning_issues)} assigned planning work items"
-                                }
-                except Exception as e:
-                    self.log(f"Error calling assigned issues tool: {e}")
-            
-            return {"found_work": False, "message": "No assigned GitLab planning work items found"}
-            
-        except Exception as e:
-            self.log(f"Error scanning assigned GitLab work: {e}")
-            return {"found_work": False, "message": f"Error scanning assigned work: {str(e)}"}
-
-    def _scan_available_gitlab_work(self) -> Dict[str, Any]:
-        """Scan for available GitLab work items that can be claimed"""
-        try:
-            self.log("🔍 Scanning for available GitLab planning work items to claim...")
-            
-            if not self.is_gitlab_enabled():
-                return {"found_work": False, "message": "GitLab not configured"}
-            
-            # Get GitLab operations instance
-            try:
-                from operations.gitlab_operations import GitLabOperations
-                gitlab_ops = GitLabOperations()
-                
-                # Get all projects to search for work
-                projects = gitlab_ops.get_projects_list()
-                available_work = []
-                
-                for project in projects:
-                    project_id = project.get("id")
-                    if not project_id:
-                        continue
-                    
-                    # Get open issues for this project
-                    issues = gitlab_ops.get_project_issues(project_id, state="opened")
-                    
-                    # Look for issues that this agent can handle
-                    for issue in issues:
-                        assigned_users = issue.get("assignees", [])
-                        issue_labels = issue.get("labels", [])
-                        
-                        # Check if this agent can handle this work
-                        relevant_labels = ["planning", "architecture", "strategy", "design", "kb-plan"]
-                        has_relevant_label = any(label in issue_labels for label in relevant_labels)
-                        
-                        # Can take work if: has relevant labels AND (unassigned OR not in progress)
-                        is_unassigned = len(assigned_users) == 0
-                        not_in_progress = "in-progress" not in issue_labels
-                        
-                        if has_relevant_label and (is_unassigned or not_in_progress):
-                            work_item = {
-                                "id": issue.get("id"),
-                                "iid": issue.get("iid"),
-                                "project_id": project_id,
-                                "title": issue.get("title"),
-                                "description": issue.get("description"),
-                                "labels": issue_labels,
-                                "assignees": assigned_users,
-                                "state": issue.get("state"),
-                                "web_url": issue.get("web_url"),
-                                "created_at": issue.get("created_at"),
-                                "updated_at": issue.get("updated_at")
-                            }
-                            available_work.append(work_item)
-                
-                if available_work:
-                    self.log(f"✅ Found {len(available_work)} available planning work items")
-                    return {
-                        "found_work": True,
-                        "work_type": "available_gitlab",
-                        "work_items": available_work,
-                        "message": f"Found {len(available_work)} available planning work items"
-                    }
-                else:
-                    return {"found_work": False, "message": "No available planning work items found"}
-                    
-            except Exception as e:
-                self.log(f"Error with GitLab operations: {e}")
-                return {"found_work": False, "message": f"GitLab operations error: {str(e)}"}
-            
-        except Exception as e:
-            self.log(f"Error scanning available GitLab work: {e}")
-            return {"found_work": False, "message": f"Error scanning available work: {str(e)}"}
-
-    def _execute_gitlab_work(self, work_result: Dict[str, Any], state: AgentState) -> AgentState:
-        """Execute GitLab work items (assigned work)"""
-        try:
-            work_items = work_result.get("work_items", [])
-            if not work_items:
-                self.log("No work items to execute")
-                return state
-            
-            # Execute the first (highest priority) work item
-            work_item = work_items[0]
-            self.log(f"🚀 Executing GitLab planning work: {work_item.get('title', 'Unknown')}")
-            
-            # Execute the work directly
-            result = self._execute_planning_work_item(work_item, state)
-            
-            if result.get("success"):
-                self.log("✅ GitLab planning work item completed successfully")
-            else:
-                self.log(f"⚠️ GitLab planning work item had issues: {result.get('error', 'Unknown error')}")
-            
-            return state
-            
-        except Exception as e:
-            self.log(f"Error executing GitLab work: {e}")
-            return state
-
-    def _claim_and_execute_work(self, work_result: Dict[str, Any], state: AgentState) -> AgentState:
-        """Claim and execute available GitLab work items"""
-        try:
-            work_items = work_result.get("work_items", [])
-            if not work_items:
-                self.log("No work items to claim")
-                return state
-            
-            # Claim and execute the first (highest priority) work item
-            work_item = work_items[0]
-            self.log(f"🎯 Claiming and executing planning work: {work_item.get('title', 'Unknown')}")
-            
-            # First claim the work item
-            claim_success = self._claim_gitlab_work_item(work_item)
-            if not claim_success:
-                self.log("❌ Failed to claim work item")
-                return state
-            
-            # Then execute it
-            result = self._execute_planning_work_item(work_item, state)
-            
-            if result.get("success"):
-                self.log("✅ Claimed planning work item completed successfully")
-            else:
-                self.log(f"⚠️ Claimed planning work item had issues: {result.get('error', 'Unknown error')}")
-            
-            return state
-            
-        except Exception as e:
-            self.log(f"Error claiming and executing work: {e}")
-            return state
-
-    def _claim_gitlab_work_item(self, work_item: Dict[str, Any]) -> bool:
-        """Claim a GitLab work item by commenting and labeling"""
-        try:
-            project_id = work_item.get("project_id")
-            issue_iid = work_item.get("iid")
-            issue_title = work_item.get("title", "Unknown")
-            
-            self.log(f"🎯 Claiming planning work item: {issue_title} (#{issue_iid})")
-            
-            # Add claiming comment using GitLab tools
-            comment_tool = next(
-                (tool for tool in self.tools if "comment" in tool.name.lower()), 
-                None
-            )
-            
-            if comment_tool:
-                claim_comment = f"""🤖 **ContentPlannerAgent claiming this work item**
-
-**Claim Time:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-**Agent:** ContentPlannerAgent
-**Status:** Starting content planning work
-
-This issue is now in progress. I will provide regular updates and mark as complete when finished.
-"""
-                try:
-                    comment_tool._run(
-                        project_id=str(project_id),
-                        issue_iid=str(issue_iid),
-                        comment=claim_comment
-                    )
-                    self.log(f"✅ Successfully claimed planning work item #{issue_iid}")
-                    return True
-                except Exception as e:
-                    self.log(f"⚠️ Error adding claim comment: {e}")
-            
-            # Even if comment fails, consider it claimed
-            self.log(f"⚠️ Claimed planning work item #{issue_iid} (comment may have failed)")
-            return True
-            
-        except Exception as e:
-            self.log(f"⚠️ Error claiming work item: {str(e)}")
-            # Continue anyway - claiming is not critical for execution
-            return True
-
-    def _execute_planning_work_item(self, work_item: Dict[str, Any], state: AgentState) -> Dict[str, Any]:
-        """Execute a specific planning work item"""
-        try:
-            issue_title = work_item.get("title", "Unknown")
-            issue_description = work_item.get("description", "")
-            
-            self.log(f"📋 Executing planning work: {issue_title}")
-            
-            # Analyze the work item and execute appropriate planning actions
-            # This would involve using the planning tools and methods
-            
-            # For now, return success to indicate the work was processed
-            return {
-                "success": True,
-                "message": f"Completed planning work: {issue_title}",
-                "work_item": work_item
-            }
-            
-        except Exception as e:
-            self.log(f"Error executing planning work item: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "work_item": work_item
-            }
     
     def _create_content_strategy(self, user_request: str, state: AgentState) -> Dict[str, Any]:
         """Create comprehensive content strategy for the KB request"""

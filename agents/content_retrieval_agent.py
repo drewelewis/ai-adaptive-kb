@@ -8,6 +8,7 @@ from tools.knowledge_base_tools import KnowledgeBaseTools
 from tools.gitlab_tools import GitLabTools
 from prompts.knowledge_base_prompts import prompts as kb_prompts
 from prompts.multi_agent_prompts import prompts as ma_prompts
+from prompts.foundational_prompts import AgentSpecificFoundations
 
 
 class ContentRetrievalAgent(BaseAgent):
@@ -27,11 +28,11 @@ class ContentRetrievalAgent(BaseAgent):
     """
     
     def __init__(self, llm: AzureChatOpenAI):
-        # Combine base KB prompts with specialized retrieval prompts
-        base_prompt = kb_prompts.master_prompt()
+        # Use foundational prompt from AgentSpecificFoundations
+        foundational_prompt = AgentSpecificFoundations.content_retrieval_foundation()
         specialized_prompt = self._get_retrieval_prompt()
         gitlab_integration_prompt = self._create_gitlab_integration_prompt()
-        system_prompt = f"{base_prompt}\n\n{specialized_prompt}\n\n{gitlab_integration_prompt}"
+        system_prompt = f"{foundational_prompt}\n\n{specialized_prompt}\n\n{gitlab_integration_prompt}"
         
         super().__init__("ContentRetrieval", llm, system_prompt)
         

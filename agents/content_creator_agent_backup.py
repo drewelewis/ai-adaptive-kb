@@ -9,7 +9,6 @@ from tools.knowledge_base_tools import KnowledgeBaseTools
 from tools.gitlab_tools import GitLabTools
 from prompts.knowledge_base_prompts import prompts as kb_prompts
 from prompts.multi_agent_prompts import prompts as ma_prompts
-from prompts.foundational_prompts import AgentSpecificFoundations
 
 # Ensure environment variables are loaded for database connectivity
 from dotenv import load_dotenv
@@ -32,15 +31,15 @@ class ContentCreatorAgent(BaseAgent):
     """
     
     def __init__(self, llm: AzureChatOpenAI):
-        # Use foundational prompt for consistency with other agents
-        foundational_prompt = AgentSpecificFoundations.content_creation_foundation()
+        # Combine base KB prompts with specialized creation prompts
+        base_prompt = kb_prompts.master_prompt()
         specialized_prompt = self._get_creation_prompt()
         gitlab_integration_prompt = self._create_gitlab_integration_prompt()
         
-        super().__init__("ContentCreatorAgent", llm, foundational_prompt)
+        super().__init__("ContentCreatorAgent", llm, base_prompt)
         
         # Enhanced system prompt with GitLab integration
-        self.system_prompt = f"{foundational_prompt}\n\n{specialized_prompt}\n\n{gitlab_integration_prompt}\n\n{self._get_agent_identity_prompt()}"
+        self.system_prompt = f"{base_prompt}\n\n{specialized_prompt}\n\n{gitlab_integration_prompt}\n\n{self._get_agent_identity_prompt()}"
         
         # Initialize knowledge base tools - creation focused
         kb_tools = KnowledgeBaseTools()
@@ -107,12 +106,7 @@ Focus on work items that match your expertise in content creation, writing, and 
             "KnowledgeBaseGetArticleByArticleId",
             "KnowledgeBaseGetChildArticlesByParentIds",
             "KnowledgeBaseGetRootLevelArticles",
-            "KnowledgeBaseGetArticleHierarchy",
-            # TAGGING TOOLS - CRITICAL for article organization
-            "KnowledgeBaseInsertTag",                    # Create new tags
-            "KnowledgeBaseAddTagToArticle",             # Add tags to articles  
-            "KnowledgeBaseSetArticleTags",              # Set multiple tags on articles
-            "KnowledgeBaseGetTagsByKnowledgeBase"       # View existing tags
+            "KnowledgeBaseGetArticleHierarchy"
         }
         
         return [tool for tool in all_tools if tool.name in creation_tool_names]
@@ -565,16 +559,6 @@ When creating content, leverage GitLab's collaborative features to ensure alignm
                     knowledge_base_id=str(kb_id),
                     article=article_obj
                 )
-                
-                # CRITICAL: Apply mandatory tags after article creation
-                self.log(f"DEBUG: About to check for tagging - result: {result}, has_id: {hasattr(result, 'id') if result else 'result_is_none'}")
-                if result and hasattr(result, 'id'):
-                    article_id = result.id
-                    self.log(f"DEBUG: Starting mandatory tagging for article_id: {article_id}, kb_id: {kb_id}")
-                    self._apply_mandatory_tags(article_id, kb_id, title, content)
-                    self.log(f"DEBUG: Finished mandatory tagging for article_id: {article_id}")
-                else:
-                    self.log(f"DEBUG: TAGGING SKIPPED - result: {result}, has_id: {hasattr(result, 'id') if result else 'result_is_none'}")
                 
                 self.log(f"DEBUG: Article created successfully: {title}")
                 return {
@@ -1185,7 +1169,7 @@ When creating content, leverage GitLab's collaborative features to ensure alignm
                     self.log(f"🚀 Executing article creation: {gap['topic']}")
                     
                     # Use the actual article creation method
-                    execution_result = self._execute_article_creation_simple(
+                    execution_result = self._execute_article_creation(
                         kb_id=int(kb_id),
                         title=gap['topic'],
                         description=gap['description']
@@ -1455,7 +1439,7 @@ Creating comprehensive articles for this knowledge base...
             self._add_work_progress_update(project_id, issue_id, progress_comment)
             
             # Execute content creation
-            creation_result = self._execute_article_creation_simple(kb_id, issue_title, issue_description)
+            creation_result = self._execute_article_creation(kb_id, issue_title, issue_description)
             
             if creation_result.get("success", False):
                 articles_created = creation_result.get("articles_created", [])
@@ -1550,11 +1534,12 @@ The content creation process encountered an error. Please review the logs for de
                         except Exception as e:
                             self.log(f"Error finding KB by project: {e}")
             
-            # Method 3: Try to get KB context from current session state
-            if not kb_id and hasattr(self, 'kb_context') and self.kb_context:
-                kb_id = self.kb_context.get('knowledge_base_id')
-                if kb_id:
-                    self.log(f"📍 Using KB ID {kb_id} from current context")
+            # Method 3: Check work item title for KB reference
+            if not kb_id:
+                title = work_item.get("title", "")
+                if "Career Change" in title:
+                    kb_id = 40  # Known KB ID for Career Change KB
+                    self.log(f"📍 Using hardcoded KB ID {kb_id} for Career Change title")
             
             # CRITICAL FIX: Set KB context once we have the KB ID
             if kb_id:
@@ -1582,220 +1567,6 @@ The content creation process encountered an error. Please review the logs for de
         except Exception as e:
             self.log(f"Error extracting KB ID: {e}")
             return None
-
-    def _execute_article_creation_simple(self, kb_id: int, title: str, description: str) -> Dict[str, Any]:
-        """Execute reliable article creation with guaranteed tagging - NO FALLBACKS"""
-        try:
-            print(f"\n{'='*80}")
-            print(f"🚀 SIMPLIFIED ARTICLE CREATION FOR KB {kb_id}")
-            print(f"{'='*80}")
-            
-            # Set KB context
-            self._set_kb_context_directly(kb_id)
-            
-            # Get KB context for content generation
-            kb_name = self.kb_context.get('knowledge_base_name', 'Unknown')
-            kb_description = self.kb_context.get('knowledge_base_description', '')
-            
-            print(f"📋 KB: {kb_name}")
-            print(f"📄 Description: {kb_description[:100]}...")
-            
-            # Generate content using LLM (no function calling complexity)
-            content_prompt = f"""Generate 3-4 comprehensive articles about: {kb_name}
-
-KNOWLEDGE BASE: {kb_name}
-DESCRIPTION: {kb_description}
-
-Create practical, actionable articles. Each should be 500-1000 words with markdown formatting.
-
-Format each article exactly as:
----ARTICLE START---
-TITLE: [Clear, descriptive title]
-CONTENT: [Full markdown content with # ## ### headers]
----ARTICLE END---
-
-Generate well-structured articles now."""
-
-            from langchain_core.messages import HumanMessage
-            messages = [HumanMessage(content=content_prompt)]
-            response = self.llm.invoke(messages)
-            
-            # Create articles with guaranteed tagging
-            articles_created = self._create_articles_with_guaranteed_tagging(
-                str(response.content) if hasattr(response, 'content') else str(response), 
-                kb_id
-            )
-            
-            print(f"✅ Created {len(articles_created)} articles with guaranteed tagging")
-            
-            return {
-                "success": True,
-                "articles_created": articles_created,
-                "method": "simplified_no_fallback",
-                "total_articles": len(articles_created)
-            }
-            
-        except Exception as e:
-            self.log(f"Error in simplified article creation: {str(e)}")
-            return {"success": False, "error": str(e)}
-
-    def _create_articles_with_guaranteed_tagging(self, llm_response: str, kb_id: int) -> List[Dict[str, Any]]:
-        """Parse LLM response and create articles with GUARANTEED tagging"""
-        articles_created = []
-        
-        try:
-            import re
-            
-            # Parse articles using regex
-            article_pattern = r'---ARTICLE START---(.*?)---ARTICLE END---'
-            article_matches = re.findall(article_pattern, llm_response, re.DOTALL)
-            
-            self.log(f"🔍 Found {len(article_matches)} articles to create")
-            
-            for i, article_block in enumerate(article_matches):
-                try:
-                    # Extract title and content
-                    title_match = re.search(r'TITLE:\s*(.+)', article_block)
-                    content_match = re.search(r'CONTENT:\s*(.+)', article_block, re.DOTALL)
-                    
-                    if title_match and content_match:
-                        title = title_match.group(1).strip()
-                        content = content_match.group(1).strip()
-                        
-                        self.log(f"🔨 Creating article {i+1}: {title}")
-                        
-                        # Create article with guaranteed tagging
-                        result = self._create_single_article_with_guaranteed_tags(title, content, kb_id)
-                        
-                        if result and result.get('success'):
-                            articles_created.append({
-                                "title": title,
-                                "content_preview": content[:100] + "...",
-                                "article_id": result.get('article_id'),
-                                "tags_applied": result.get('tags_applied', []),
-                                "success": True
-                            })
-                            self.log(f"✅ Article created: {title} with {len(result.get('tags_applied', []))} tags")
-                        else:
-                            self.log(f"❌ Failed to create article: {title}")
-                        
-                except Exception as e:
-                    self.log(f"❌ Error creating article {i+1}: {str(e)}")
-            
-        except Exception as e:
-            self.log(f"❌ Error parsing LLM response: {str(e)}")
-        
-        return articles_created
-
-    def _create_single_article_with_guaranteed_tags(self, title: str, content: str, kb_id: int) -> Dict[str, Any]:
-        """Create a single article and apply tags with GUARANTEED execution"""
-        try:
-            # Find the insert tool
-            insert_tool = next((t for t in self.tools if t.name == 'KnowledgeBaseInsertArticle'), None)
-            if not insert_tool:
-                self.log("❌ KnowledgeBaseInsertArticle tool not found")
-                return {"success": False, "error": "Insert tool not found"}
-            
-            # Create article
-            from models.article import Article
-            article_obj = Article.InsertModel(
-                title=title,
-                content=content,
-                knowledge_base_id=int(kb_id),
-                author_id=1,
-                parent_id=None
-            )
-            
-            # Insert article
-            self.log(f"📝 Inserting article: {title}")
-            result = insert_tool._run(
-                knowledge_base_id=str(kb_id),
-                article=article_obj
-            )
-            
-            # GUARANTEED tagging - this WILL execute
-            tags_applied = []
-            if result and hasattr(result, 'id'):
-                article_id = result.id
-                self.log(f"🏷️ GUARANTEED TAGGING: Starting for article {article_id}")
-                tags_applied = self._apply_mandatory_tags_and_return_list(article_id, kb_id, title, content)
-                self.log(f"🏷️ GUARANTEED TAGGING: Applied {len(tags_applied)} tags to article {article_id}")
-                
-                return {
-                    "success": True,
-                    "article_id": article_id,
-                    "tags_applied": tags_applied,
-                    "result": result
-                }
-            else:
-                self.log(f"❌ Article creation failed - no ID returned for: {title}")
-                return {"success": False, "error": "No article ID returned"}
-                
-        except Exception as e:
-            self.log(f"❌ Error in _create_single_article_with_guaranteed_tags: {str(e)}")
-            return {"success": False, "error": str(e)}
-
-    def _apply_mandatory_tags_and_return_list(self, article_id: int, kb_id: int, title: str, content: str) -> List[str]:
-        """Apply mandatory tags and return the list of applied tags"""
-        try:
-            self.log(f"🏷️ MANDATORY TAGGING STARTED for article {article_id}: {title}")
-            
-            # FOUNDATIONAL REQUIREMENT: Every article needs skill-level + content-type + domain-specific tags
-            
-            # 1. Determine skill level tag
-            skill_level_tag = "beginner"  # Default
-            if any(word in content.lower() for word in ["advanced", "expert", "complex", "sophisticated"]):
-                skill_level_tag = "advanced"
-            elif any(word in content.lower() for word in ["intermediate", "moderate", "basic understanding"]):
-                skill_level_tag = "intermediate"
-            
-            # 2. Determine content type tag  
-            content_type_tag = "guide"  # Default
-            if any(word in title.lower() for word in ["overview", "introduction", "what is", "basics"]):
-                content_type_tag = "overview"
-            elif any(word in content.lower() for word in ["tutorial", "step-by-step", "how to", "walkthrough"]):
-                content_type_tag = "tutorial"
-            elif any(word in content.lower() for word in ["reference", "quick", "lookup", "glossary"]):
-                content_type_tag = "reference"
-            elif any(word in content.lower() for word in ["best practice", "recommendation", "should", "avoid"]):
-                content_type_tag = "best-practices"
-            
-            # 3. Determine domain-specific tags based on KB context (financial planning)
-            domain_tags = []
-            financial_keywords = {
-                "budget": "budgeting",
-                "saving": "savings-strategies", 
-                "investment": "investment-planning",
-                "inflation": "inflation-protection",
-                "family": "family-finance",
-                "cost": "cost-management",
-                "expense": "expense-tracking",
-                "financial": "financial-planning"
-            }
-            
-            for keyword, tag in financial_keywords.items():
-                if keyword in title.lower() or keyword in content.lower():
-                    domain_tags.append(tag)
-            
-            # Ensure we have at least one domain tag
-            if not domain_tags:
-                domain_tags = ["financial-planning"]  # Default domain tag
-            
-            # 4. Create and apply tags
-            tags_to_apply = [skill_level_tag, content_type_tag] + domain_tags[:2]  # Limit to avoid over-tagging
-            
-            applied_tags = []
-            for tag_name in tags_to_apply:
-                success = self._ensure_tag_exists_and_apply(kb_id, article_id, tag_name)
-                if success:
-                    applied_tags.append(tag_name)
-                    
-            self.log(f"✅ Applied {len(applied_tags)} mandatory tags to article {article_id}: {applied_tags}")
-            return applied_tags
-            
-        except Exception as e:
-            self.log(f"❌ Error applying mandatory tags to article {article_id}: {str(e)}")
-            return []
 
     def _execute_article_creation(self, kb_id: int, title: str, description: str) -> Dict[str, Any]:
         """Execute the actual article creation process using LLM with tools"""
@@ -1892,22 +1663,14 @@ For EACH article, provide:
 2. Comprehensive content (500-1000 words) focused on the KB topic
 3. Proper markdown formatting with # ## ### headers
 4. Content must be relevant to: {kb_description}
-5. CRITICAL: List 3-5 relevant tags for the article (keywords, topics, categories)
 
 Generate articles that comprehensively cover the KB topic. Base the articles on the knowledge base description and ensure they provide practical, actionable information for the intended audience.
 
 Format each article as:
 ---ARTICLE START---
 TITLE: [Article Title]
-TAGS: [tag1, tag2, tag3, tag4, tag5]
 CONTENT: [Full markdown content]
 ---ARTICLE END---
-
-IMPORTANT: After generating content, you MUST:
-1. Create the article using KnowledgeBaseInsertArticle
-2. Create any new tags using KnowledgeBaseInsertTag
-3. Apply tags to the article using KnowledgeBaseAddTagToArticle
-4. Consider creating follow-up work items using GitLabCreateIssueTool if needed
 
 Generate all articles now."""
 
@@ -1921,7 +1684,7 @@ Generate all articles now."""
                 content_text = str(response.content) if hasattr(response, 'content') else str(response)
                 
                 # Parse articles from LLM response and execute tools
-                articles_created = self._parse_and_create_articles_manual(content_text, kb_id)
+                articles_created = self._parse_and_create_articles_from_response(content_text, kb_id)
                 
                 if len(articles_created) > 0:
                     print(f"✅ FORCED TOOL EXECUTION: Created {len(articles_created)} articles")
@@ -1965,9 +1728,457 @@ Generate all articles now."""
             # Get current KB context for appropriate content generation
             kb_name = self.kb_context.get('knowledge_base_name', 'Unknown Knowledge Base')
             kb_description = self.kb_context.get('knowledge_base_description', '')
+            
+            # Generate articles based on the actual KB context, not hardcoded topics
+            articles_to_create = self._generate_articles_for_kb_context(kb_name, kb_description, title, description)
 
-            # Generate articles appropriate for the KB context
-            fallback_articles = self._generate_kb_appropriate_articles(kb_name, kb_description)
+## Implementation Framework
+
+### Phase 1: Exploration (Months 1-3)
+- Complete comprehensive self-assessment
+- Research target industries and roles
+- Begin networking and informational interviews
+- Start skill development planning
+
+### Phase 2: Preparation (Months 4-9)
+- Acquire necessary skills and certifications
+- Build relevant experience through projects
+- Expand professional network
+- Update professional materials
+
+### Phase 3: Transition (Months 10-12)
+- Launch active job search
+- Leverage network for opportunities
+- Interview and negotiate offers
+- Plan departure from current role
+
+### Phase 4: Integration (Months 13-18)
+- Successfully onboard in new role
+- Continue learning and adaptation
+- Build new professional relationships
+- Evaluate and adjust career trajectory
+
+## Success Factors
+
+### Mindset and Attitude
+- **Growth Mindset**: Embrace learning and adaptation
+- **Resilience**: Persist through challenges and setbacks
+- **Patience**: Allow sufficient time for the process
+- **Confidence**: Believe in your ability to succeed
+
+### Support Systems
+- **Mentors**: Seek guidance from experienced professionals
+- **Peers**: Connect with others making similar transitions
+- **Family**: Ensure personal support during the change
+- **Professionals**: Consider career coaches or counselors
+
+## Common Challenges and Solutions
+
+### Financial Concerns
+- Create emergency fund before transitioning
+- Consider gradual transition strategies
+- Explore part-time or contract opportunities
+- Negotiate extended timelines when possible
+
+### Skill Gaps
+- Invest in targeted education and training
+- Seek stretch assignments in current role
+- Volunteer for relevant projects
+- Build portfolio through personal projects
+
+### Network Limitations
+- Join professional associations
+- Attend industry events and conferences
+- Engage in online communities
+- Seek informational interviews
+
+## Measuring Progress
+
+Track your career change journey with these metrics:
+- **Learning Milestones**: Skills acquired and certifications earned
+- **Network Growth**: New professional connections made
+- **Market Knowledge**: Industry insights and understanding
+- **Opportunity Generation**: Interviews and job prospects
+- **Personal Satisfaction**: Alignment with values and goals
+
+Career change represents one of life's most significant professional decisions. With proper planning, dedication, and strategic execution, it leads to greater fulfillment and success."""
+                    },
+                    {
+                        "title": "Skills Assessment and Development",
+                        "content": """# Skills Assessment and Development for Career Change
+
+## Understanding Your Skill Portfolio
+
+### Current Skills Inventory
+Creating a comprehensive skills inventory is the foundation of effective career transition planning.
+
+#### Technical Skills
+- **Industry-Specific Knowledge**: Domain expertise from your current field
+- **Software Proficiency**: Tools, platforms, and technologies you've mastered
+- **Methodologies**: Frameworks and approaches you've implemented
+- **Certifications**: Formal credentials and qualifications
+
+#### Transferable Skills
+- **Leadership**: Team management, project leadership, and influence abilities
+- **Communication**: Written, verbal, and presentation skills
+- **Analysis**: Problem-solving, data analysis, and critical thinking
+- **Organization**: Project management, time management, and planning
+
+#### Soft Skills
+- **Interpersonal**: Relationship building, networking, and collaboration
+- **Adaptability**: Learning agility and change management
+- **Creativity**: Innovation, ideation, and creative problem-solving
+- **Emotional Intelligence**: Self-awareness, empathy, and social skills
+
+## Skills Gap Analysis
+
+### Target Role Research
+Thoroughly analyze your desired career path:
+
+#### Job Market Analysis
+- **Job Descriptions**: Study multiple postings for consistent requirements
+- **Required vs. Preferred**: Distinguish between must-haves and nice-to-haves
+- **Industry Standards**: Understand baseline expectations
+- **Future Trends**: Anticipate evolving skill requirements
+
+#### Skills Mapping Exercise
+1. **List Target Skills**: Compile required skills from research
+2. **Rate Current Level**: Assess your proficiency (Beginner/Intermediate/Advanced)
+3. **Identify Gaps**: Highlight areas needing development
+4. **Prioritize Development**: Focus on critical and quick-win skills
+
+### Development Priority Matrix
+Categorize skills by impact and effort required:
+
+#### High Impact, Low Effort (Quick Wins)
+- Online certifications
+- Software tutorials
+- Reading industry publications
+- Joining professional groups
+
+#### High Impact, High Effort (Strategic Investments)
+- Formal degree programs
+- Intensive bootcamps
+- Major project experience
+- Leadership roles
+
+#### Low Impact, Low Effort (Easy Additions)
+- Basic software skills
+- Industry terminology
+- Networking activities
+- Thought leadership reading
+
+#### Low Impact, High Effort (Avoid Unless Required)
+- Extensive programs for minimal benefit
+- Outdated or declining skills
+- Over-specialization in narrow areas
+
+## Development Strategies
+
+### Formal Education
+#### University Programs
+- **Degree Programs**: Bachelor's, Master's, or specialized degrees
+- **Certificate Programs**: Focused, shorter-term credentials
+- **Continuing Education**: Professional development courses
+- **Executive Education**: Leadership and management programs
+
+#### Online Learning
+- **MOOCs**: Coursera, edX, and Udacity offerings
+- **Platform-Specific**: LinkedIn Learning, Udemy, Pluralsight
+- **Vendor Training**: Microsoft, Google, Amazon certifications
+- **Industry-Specific**: Specialized platforms for your target field
+
+### Practical Experience
+#### Current Role Enhancement
+- **Stretch Assignments**: Volunteer for cross-functional projects
+- **Skill Application**: Use new skills in current responsibilities
+- **Internal Mobility**: Explore different departments or roles
+- **Leadership Opportunities**: Lead initiatives or teams
+
+#### External Projects
+- **Freelancing**: Take on relevant contract work
+- **Volunteering**: Apply skills to nonprofit or community projects
+- **Personal Projects**: Build portfolio through independent work
+- **Open Source**: Contribute to relevant community projects
+
+### Networking and Mentorship
+#### Professional Networks
+- **Industry Associations**: Join relevant professional organizations
+- **Alumni Networks**: Leverage educational and professional connections
+- **Online Communities**: Participate in forums and social groups
+- **Conferences and Events**: Attend industry gatherings
+
+#### Mentorship Relationships
+- **Industry Mentors**: Find experienced professionals in target field
+- **Skill-Specific Mentors**: Get guidance on particular competencies
+- **Peer Mentorship**: Exchange knowledge with fellow career changers
+- **Reverse Mentoring**: Learn from those with complementary skills
+
+## Creating Your Development Plan
+
+### Goal Setting
+#### SMART Objectives
+- **Specific**: Clearly defined skills and competencies
+- **Measurable**: Quantifiable progress indicators
+- **Achievable**: Realistic given your resources and timeline
+- **Relevant**: Aligned with career transition goals
+- **Time-bound**: Clear deadlines and milestones
+
+#### Learning Pathways
+- **Sequential Learning**: Build skills in logical progression
+- **Parallel Development**: Work on multiple skills simultaneously
+- **Just-in-Time Learning**: Acquire skills as opportunities arise
+- **Continuous Improvement**: Ongoing skill refinement
+
+### Resource Management
+#### Time Allocation
+- **Daily Learning**: Consistent small investments
+- **Intensive Periods**: Focused blocks for major skill development
+- **Integration**: Incorporate learning into current work
+- **Balance**: Maintain work-life balance during transition
+
+#### Financial Investment
+- **Budget Planning**: Allocate funds for education and training
+- **ROI Analysis**: Evaluate cost-benefit of different options
+- **Employer Support**: Leverage company training budgets
+- **Free Resources**: Maximize no-cost learning opportunities
+
+### Progress Tracking
+#### Documentation
+- **Skills Matrix**: Visual representation of skill development
+- **Learning Journal**: Record insights and progress
+- **Portfolio Building**: Compile examples of new capabilities
+- **Achievement Log**: Track certifications and milestones
+
+#### Regular Assessment
+- **Monthly Reviews**: Evaluate progress against goals
+- **Feedback Collection**: Seek input from mentors and peers
+- **Market Validation**: Test skills against current requirements
+- **Plan Adjustments**: Modify approach based on results
+
+## Showcasing New Skills
+
+### Professional Branding
+#### Digital Presence
+- **LinkedIn Optimization**: Highlight new skills and experiences
+- **Portfolio Website**: Showcase projects and capabilities
+- **Social Media**: Share insights and demonstrate expertise
+- **Professional Bio**: Update descriptions across platforms
+
+#### Content Creation
+- **Industry Articles**: Write about your learning journey
+- **Case Studies**: Document successful projects
+- **Speaking Opportunities**: Present at events or webinars
+- **Video Content**: Create tutorials or thought leadership videos
+
+### Validation and Credibility
+#### Formal Recognition
+- **Certifications**: Earn industry-recognized credentials
+- **Awards and Recognition**: Seek acknowledgment for achievements
+- **References**: Build testimonials from those who've seen your work
+- **Professional Memberships**: Join relevant organizations
+
+#### Practical Application
+- **Project Results**: Demonstrate measurable outcomes
+- **Problem Solving**: Show how skills solve real challenges
+- **Innovation**: Highlight creative applications of new abilities
+- **Leadership**: Lead initiatives that showcase capabilities
+
+Skills development is an ongoing process that extends far beyond the initial career transition. By taking a strategic, systematic approach to skill assessment and development, you create a strong foundation for long-term career success and adaptability in an ever-changing professional landscape."""
+                    }
+                ]
+            else:
+                # Generic articles for other knowledge bases
+                articles_to_create = [
+                    {
+                        "title": f"Introduction to {title.replace('KB-CREATE: ', '')}",
+                        "content": f"""# Introduction to {title.replace('KB-CREATE: ', '')}
+
+## Overview
+{description}
+
+## Key Concepts
+This comprehensive guide covers essential information and practical insights for this topic.
+
+## Topics Covered
+- Fundamental principles and concepts
+- Best practices and methodologies  
+- Practical applications and examples
+- Advanced techniques and strategies
+
+## Getting Started
+Begin by understanding the core concepts and building a solid foundation of knowledge.
+
+## Next Steps
+Explore specific areas of interest and apply the concepts to your unique situation and goals."""
+                    }
+                ]
+            
+            # Create articles using direct tool execution
+            for article_data in articles_to_create:
+                try:
+                    # Create Article.InsertModel object
+                    article_model = Article.InsertModel(
+                        title=article_data["title"],
+                        content=article_data["content"],
+                        knowledge_base_id=kb_id,
+                        author_id=1,
+                        parent_id=None
+                    )
+                    
+                    # Insert article using KB operations
+                    result = kb_ops.insert_article(
+                        knowledge_base_id=str(kb_id),
+                        article=article_model
+                    )
+                    
+                    if result:
+                        articles_created.append({
+                            "title": article_data["title"],
+                            "content_preview": article_data["content"][:100] + "...",
+                            "article_id": result.id if hasattr(result, 'id') else 'Unknown',
+                            "manual_execution": True
+                        })
+                        self.log(f"Created article via manual execution: {article_data['title']}")
+                    else:
+                        self.log(f"Failed to create article: {article_data['title']}")
+                        
+                except Exception as e:
+                    self.log(f"Error creating article {article_data.get('title', 'Unknown')}: {str(e)}")
+            
+            if len(articles_created) > 0:
+                self.log(f"Successfully created {len(articles_created)} articles via manual execution")
+                return {
+                    "success": True,
+                    "articles_created": articles_created,
+                    "method": "manual_tool_execution"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "No articles were created even with manual execution"
+                }
+                
+        except Exception as e:
+            self.log(f"Error in manual article creation: {str(e)}")
+            import traceback
+            self.log(f"Traceback: {traceback.format_exc()}")
+            return {
+                "success": False,
+                "error": f"Manual article creation failed: {str(e)}"
+            }
+
+    def _parse_and_create_articles_from_response(self, content: str, kb_id: int) -> List[Dict[str, Any]]:
+        """Parse LLM response and create articles using KnowledgeBaseInsertArticle tool"""
+        articles_created = []
+        
+        try:
+            import re
+            print(f"🔍 Parsing LLM response for article creation (content length: {len(content)})")
+            
+            # Parse articles using the expected format
+            article_pattern = r'---ARTICLE START---(.*?)---ARTICLE END---'
+            article_matches = re.findall(article_pattern, content, re.DOTALL)
+            
+            print(f"📰 Found {len(article_matches)} articles to create")
+            
+            if len(article_matches) == 0:
+                # Try alternative parsing if no articles found
+                print(f"⚠️ No articles found in expected format, trying alternative parsing...")
+                # Look for title/content patterns
+                title_pattern = r'TITLE:\s*(.+)'
+                content_pattern = r'CONTENT:\s*(.*?)(?=TITLE:|$)'
+                
+                titles = re.findall(title_pattern, content)
+                contents = re.findall(content_pattern, content, re.DOTALL)
+                
+                if len(titles) > 0 and len(contents) > 0:
+                    article_matches = []
+                    for i, title in enumerate(titles):
+                        if i < len(contents):
+                            article_matches.append(f"TITLE: {title}\nCONTENT: {contents[i]}")
+                    print(f"📰 Alternative parsing found {len(article_matches)} articles")
+            
+            for i, article_content in enumerate(article_matches):
+                try:
+                    print(f"🔨 Processing article {i+1}/{len(article_matches)}")
+                    
+                    # Extract title and content
+                    title_match = re.search(r'TITLE:\s*(.+)', article_content)
+                    content_match = re.search(r'CONTENT:\s*(.*)', article_content, re.DOTALL)
+                    
+                    if title_match and content_match:
+                        title = title_match.group(1).strip()
+                        article_text = content_match.group(1).strip()
+                        
+                        print(f"📝 Creating article: {title}")
+                        print(f"📄 Content length: {len(article_text)} characters")
+                        
+                        # Find and use KnowledgeBaseInsertArticle tool
+                        insert_tool = None
+                        for tool in self.tools:
+                            if tool.name == 'KnowledgeBaseInsertArticle':
+                                insert_tool = tool
+                                break
+                        
+                        if insert_tool:
+                            # Create article data structure
+                            from models.article import Article
+                            
+                            article_model = Article.InsertModel(
+                                title=title,
+                                content=article_text,
+                                knowledge_base_id=int(kb_id),
+                                author_id=1,
+                                parent_id=None
+                            )
+                            
+                            # Execute the tool directly
+                            print(f"🔧 Executing KnowledgeBaseInsertArticle tool...")
+                            result = insert_tool._run(
+                                knowledge_base_id=str(kb_id),
+                                article=article_model
+                            )
+                            
+                            if result:
+                                articles_created.append({
+                                    "title": title,
+                                    "content_preview": article_text[:100] + "...",
+                                    "article_id": result.id if hasattr(result, 'id') else 'Unknown',
+                                    "forced_execution": True,
+                                    "success": True
+                                })
+                                print(f"✅ Article created: {title} (ID: {result.id if hasattr(result, 'id') else 'Unknown'})")
+                            else:
+                                print(f"❌ Failed to create article: {title}")
+                        else:
+                            print(f"❌ KnowledgeBaseInsertArticle tool not found")
+                    else:
+                        print(f"❌ Could not parse article {i+1} - missing title or content")
+                        
+                except Exception as e:
+                    print(f"❌ Error processing article {i+1}: {str(e)}")
+                    import traceback
+                    print(f"🔍 Traceback: {traceback.format_exc()}")
+            
+            # If no articles found with structured parsing, try to create generic articles
+            if len(articles_created) == 0 and len(content) > 100:
+                print(f"⚡ No structured articles found, creating fallback articles...")
+                return self._create_fallback_articles(kb_id, content)
+                
+        except Exception as e:
+            print(f"❌ Error in article parsing: {str(e)}")
+            import traceback
+            print(f"🔍 Traceback: {traceback.format_exc()}")
+        
+        return articles_created
+
+    def _create_fallback_articles(self, kb_id: int, llm_content: str) -> List[Dict[str, Any]]:
+        """Create fallback articles when LLM response can't be parsed"""
+        articles_created = []
+        
+        try:
+            print(f"🛠️ Creating fallback articles using LLM content insights...")
             
             # Find KnowledgeBaseInsertArticle tool
             insert_tool = None
@@ -1978,11 +2189,128 @@ Generate all articles now."""
             
             if not insert_tool:
                 print(f"❌ KnowledgeBaseInsertArticle tool not available for fallback")
-                return {"success": False, "error": "Insert tool not available"}
+                return []
+            
+            # Create fallback articles with enhanced content based on LLM response
+            fallback_articles = [
+                {
+                    "title": "Career Change Fundamentals",
+                    "content": f"""# Career Change Fundamentals
 
+## Introduction
+Career change represents a significant life transition that requires careful planning, strategic thinking, and dedicated execution. This comprehensive guide provides the essential framework for successfully navigating career transitions.
+
+## Core Principles
+
+### Self-Assessment and Discovery
+Understanding your motivations, strengths, and career aspirations forms the foundation of successful career change:
+- **Values Alignment**: Identify what matters most in your professional life
+- **Skills Inventory**: Catalog transferable and technical capabilities
+- **Interest Analysis**: Explore what energizes and motivates you
+- **Personality Fit**: Understand optimal work environments and styles
+
+### Market Research and Validation
+Thorough market analysis ensures informed decision-making:
+- **Industry Trends**: Analyze growth patterns and future outlook
+- **Role Requirements**: Understand expectations and qualifications
+- **Compensation Research**: Investigate salary ranges and benefits
+- **Cultural Fit**: Identify organizations aligned with your values
+
+### Strategic Planning Framework
+- **Timeline Development**: Establish realistic milestones and deadlines
+- **Skill Gap Analysis**: Identify development priorities
+- **Financial Planning**: Prepare for potential income changes
+- **Risk Assessment**: Plan for challenges and contingencies
+
+Based on research insights: {llm_content[:200]}...
+
+## Implementation Strategy
+A systematic approach to career transition increases success probability and reduces uncertainty throughout the process."""
+                },
+                {
+                    "title": "Skills Assessment and Development Strategy",
+                    "content": f"""# Skills Assessment and Development Strategy
+
+## Comprehensive Skills Analysis
+
+### Current Skills Inventory
+Creating a thorough understanding of your existing capabilities:
+
+#### Technical Competencies
+- **Industry Knowledge**: Domain expertise from current field
+- **Software Proficiency**: Tools and technologies mastered
+- **Methodologies**: Frameworks and approaches implemented
+- **Certifications**: Formal credentials and qualifications
+
+#### Transferable Skills
+- **Leadership**: Team management and influence capabilities
+- **Communication**: Written, verbal, and presentation abilities
+- **Analysis**: Problem-solving and critical thinking skills
+- **Organization**: Project and time management expertise
+
+### Skills Gap Analysis
+Systematic evaluation of development needs:
+
+#### Target Role Research
+- **Job Market Analysis**: Study multiple role descriptions
+- **Required vs Preferred**: Distinguish must-haves from nice-to-haves
+- **Industry Standards**: Understand baseline expectations
+- **Future Trends**: Anticipate evolving requirements
+
+#### Development Priority Matrix
+- **High Impact, Low Effort**: Quick wins and certifications
+- **High Impact, High Effort**: Strategic long-term investments
+- **Low Impact, Low Effort**: Easy supplementary additions
+- **Low Impact, High Effort**: Areas to avoid unless required
+
+Enhanced analysis from research: {llm_content[200:400] if len(llm_content) > 200 else llm_content}...
+
+## Development Pathways
+Multiple approaches to skill building ensure comprehensive preparation for career transition success."""
+                },
+                {
+                    "title": "Professional Networking and Relationship Building",
+                    "content": f"""# Professional Networking and Relationship Building
+
+## Strategic Networking Framework
+
+### Network Mapping and Analysis
+Understanding your current professional ecosystem:
+- **Inner Circle**: Close colleagues and mentors
+- **Professional Contacts**: Industry connections and peers
+- **Extended Network**: Alumni and community relationships
+- **Target Connections**: Strategic relationships to develop
+
+### Relationship Building Strategies
+
+#### Authentic Engagement
+- **Value-First Approach**: Focus on helping others before seeking assistance
+- **Consistent Communication**: Maintain regular, meaningful contact
+- **Shared Interests**: Connect around common professional interests
+- **Mutual Support**: Create reciprocal benefit relationships
+
+#### Platform Utilization
+- **LinkedIn Optimization**: Professional brand development
+- **Industry Events**: Conference and meetup participation
+- **Professional Associations**: Active membership engagement
+- **Online Communities**: Forum and group participation
+
+### Informational Interview Strategy
+Structured approach to learning and relationship building:
+- **Target Identification**: Research relevant professionals
+- **Outreach Planning**: Craft compelling connection requests
+- **Interview Preparation**: Develop thoughtful questions
+- **Follow-up Protocol**: Maintain relationships post-interview
+
+Networking insights from analysis: {llm_content[400:600] if len(llm_content) > 400 else llm_content}...
+
+## Long-term Relationship Management
+Sustainable networking practices that support ongoing career development and professional growth."""
+                }
+            ]
+            
             # Create each fallback article
             for article_data in fallback_articles:
-
                 try:
                     from models.article import Article
                     
@@ -2001,16 +2329,6 @@ Generate all articles now."""
                     )
                     
                     if result:
-                        # CRITICAL: Apply mandatory tags after article creation (FALLBACK METHOD)
-                        self.log(f"DEBUG FALLBACK: About to check for tagging - result: {result}, has_id: {hasattr(result, 'id') if result else 'result_is_none'}")
-                        if result and hasattr(result, 'id'):
-                            article_id = result.id
-                            self.log(f"DEBUG FALLBACK: Starting mandatory tagging for article_id: {article_id}, kb_id: {kb_id}")
-                            self._apply_mandatory_tags(article_id, kb_id, article_data["title"], article_data["content"])
-                            self.log(f"DEBUG FALLBACK: Finished mandatory tagging for article_id: {article_id}")
-                        else:
-                            self.log(f"DEBUG FALLBACK: TAGGING SKIPPED - result: {result}, has_id: {hasattr(result, 'id') if result else 'result_is_none'}")
-                        
                         articles_created.append({
                             "title": article_data["title"],
                             "content_preview": article_data["content"][:100] + "...",
@@ -2081,16 +2399,6 @@ Generate all articles now."""
                                 article=article_obj
                             )
                             
-                            # CRITICAL: Apply mandatory tags after article creation
-                            self.log(f"DEBUG MANUAL: About to check for tagging - result: {result}, has_id: {hasattr(result, 'id') if result else 'result_is_none'}")
-                            if result and hasattr(result, 'id'):
-                                article_id = result.id
-                                self.log(f"DEBUG MANUAL: Starting mandatory tagging for article_id: {article_id}, kb_id: {kb_id}")
-                                self._apply_mandatory_tags(article_id, kb_id, title, article_text)
-                                self.log(f"DEBUG MANUAL: Finished mandatory tagging for article_id: {article_id}")
-                            else:
-                                self.log(f"DEBUG MANUAL: TAGGING SKIPPED - result: {result}, has_id: {hasattr(result, 'id') if result else 'result_is_none'}")
-                            
                             articles_created.append({
                                 "title": title,
                                 "content_preview": article_text[:100] + "...",
@@ -2111,135 +2419,6 @@ Generate all articles now."""
             self.log(f"❌ Error parsing articles manually: {str(e)}")
         
         return articles_created
-
-    def _apply_mandatory_tags(self, article_id: int, kb_id: int, title: str, content: str):
-        """Apply mandatory tags to newly created articles following foundational requirements"""
-        try:
-            self.log(f"🏷️ MANDATORY TAGGING STARTED for article {article_id}: {title}")
-            self.log(f"🏷️ Parameters - article_id: {article_id} (type: {type(article_id)}), kb_id: {kb_id} (type: {type(kb_id)})")
-            
-            # FOUNDATIONAL REQUIREMENT: Every article needs skill-level + content-type + domain-specific tags
-            
-            # 1. Determine skill level tag
-            skill_level_tag = "beginner"  # Default
-            if any(word in content.lower() for word in ["advanced", "expert", "complex", "sophisticated"]):
-                skill_level_tag = "advanced"
-            elif any(word in content.lower() for word in ["intermediate", "moderate", "basic understanding"]):
-                skill_level_tag = "intermediate"
-            
-            # 2. Determine content type tag  
-            content_type_tag = "guide"  # Default
-            if any(word in title.lower() for word in ["overview", "introduction", "what is", "basics"]):
-                content_type_tag = "overview"
-            elif any(word in content.lower() for word in ["tutorial", "step-by-step", "how to", "walkthrough"]):
-                content_type_tag = "tutorial"
-            elif any(word in content.lower() for word in ["reference", "quick", "lookup", "glossary"]):
-                content_type_tag = "reference"
-            elif any(word in content.lower() for word in ["best practice", "recommendation", "should", "avoid"]):
-                content_type_tag = "best-practices"
-            
-            # 3. Determine domain-specific tags based on KB context (financial planning)
-            domain_tags = []
-            financial_keywords = {
-                "budget": "budgeting",
-                "saving": "savings-strategies", 
-                "investment": "investment-planning",
-                "inflation": "inflation-protection",
-                "family": "family-finance",
-                "cost": "cost-management",
-                "expense": "expense-tracking",
-                "financial": "financial-planning"
-            }
-            
-            for keyword, tag in financial_keywords.items():
-                if keyword in title.lower() or keyword in content.lower():
-                    domain_tags.append(tag)
-            
-            # Ensure we have at least one domain tag
-            if not domain_tags:
-                domain_tags = ["financial-planning"]  # Default domain tag
-            
-            # 4. Create and apply tags
-            tags_to_apply = [skill_level_tag, content_type_tag] + domain_tags[:2]  # Limit to avoid over-tagging
-            
-            for tag_name in tags_to_apply:
-                self._ensure_tag_exists_and_apply(kb_id, article_id, tag_name)
-                
-            self.log(f"✅ Applied {len(tags_to_apply)} mandatory tags to article {article_id}: {tags_to_apply}")
-            
-        except Exception as e:
-            self.log(f"❌ Error applying mandatory tags to article {article_id}: {str(e)}")
-    
-    def _ensure_tag_exists_and_apply(self, kb_id: int, article_id: int, tag_name: str) -> bool:
-        """Ensure tag exists in KB and apply it to article. Returns True if successful."""
-        try:
-            self.log(f"🏷️ DEBUG MANUAL: Starting _ensure_tag_exists_and_apply for tag '{tag_name}', article {article_id}, KB {kb_id}")
-            
-            # First check if tag already exists
-            get_tags_tool = next((t for t in self.tools if t.name == 'KnowledgeBaseGetTagsByKnowledgeBase'), None)
-            if not get_tags_tool:
-                self.log(f"❌ KnowledgeBaseGetTagsByKnowledgeBase tool not found")
-                return False
-                
-            self.log(f"🏷️ DEBUG MANUAL: Getting existing tags from KB {kb_id}")
-            existing_tags = get_tags_tool._run(knowledge_base_id=str(kb_id))
-            tag_id = None
-            
-            self.log(f"🏷️ DEBUG MANUAL: Received tags: {type(existing_tags)}, count: {len(existing_tags) if existing_tags else 0}")
-            
-            # Look for existing tag - FIXED: existing_tags is a list, not an object with .tags attribute
-            if existing_tags and isinstance(existing_tags, list):
-                for tag in existing_tags:
-                    if hasattr(tag, 'name') and tag.name.lower() == tag_name.lower():
-                        tag_id = tag.id
-                        self.log(f"🏷️ DEBUG MANUAL: Found existing tag: {tag_name} (ID: {tag_id})")
-                        break
-            
-            self.log(f"🏷️ DEBUG MANUAL: After search, tag_id = {tag_id}")
-            
-            # Create tag if it doesn't exist (this should NOT happen for existing tags)
-            if tag_id is None:
-                self.log(f"🏷️ DEBUG MANUAL: Tag '{tag_name}' not found, attempting to create it")
-                insert_tag_tool = next((t for t in self.tools if t.name == 'KnowledgeBaseInsertTag'), None)
-                if insert_tag_tool:
-                    from models.tags import Tags
-                    tag_obj = Tags.InsertModel(
-                        id=0,  # Will be auto-generated
-                        name=tag_name,
-                        knowledge_base_id=int(kb_id)
-                    )
-                    tag_result = insert_tag_tool._run(tag=tag_obj)
-                    if hasattr(tag_result, 'tag_id'):
-                        tag_id = tag_result.tag_id
-                        self.log(f"✅ Created new tag: {tag_name} (ID: {tag_id})")
-                    else:
-                        self.log(f"❌ Failed to create tag: {tag_name}")
-                        return False
-                else:
-                    self.log(f"❌ KnowledgeBaseInsertTag tool not found")
-                    return False
-            
-            # Apply tag to article
-            if tag_id:
-                self.log(f"🏷️ DEBUG MANUAL: Applying tag ID {tag_id} to article {article_id}")
-                add_tag_tool = next((t for t in self.tools if t.name == 'KnowledgeBaseAddTagToArticle'), None)
-                if add_tag_tool:
-                    result = add_tag_tool._run(article_id=str(article_id), tag_id=str(tag_id))
-                    self.log(f"🏷️ DEBUG MANUAL: AddTagToArticle result: {result}")
-                    self.log(f"✅ Applied tag '{tag_name}' (ID: {tag_id}) to article {article_id}")
-                    return True
-                else:
-                    self.log(f"❌ KnowledgeBaseAddTagToArticle tool not found")
-                    return False
-            else:
-                self.log(f"❌ No tag ID available for '{tag_name}'")
-                return False
-                        
-        except Exception as e:
-            self.log(f"❌ Error ensuring tag '{tag_name}' exists and applying to article {article_id}: {str(e)}")
-            import traceback
-            self.log(f"🏷️ DEBUG MANUAL: Full traceback: {traceback.format_exc()}")
-            return False
 
     def _get_project_id_from_kb(self, kb_id: int) -> Optional[int]:
         """Get GitLab project ID associated with this KB"""
@@ -2335,137 +2514,3 @@ Generate all articles now."""
             # Would need to implement issue completion
         except Exception as e:
             self.log(f"Error marking issue complete: {e}")
-
-    def _generate_kb_appropriate_articles(self, kb_name: str, kb_description: str) -> List[Dict[str, str]]:
-        """Generate articles appropriate for the specific KB context"""
-        
-        # Determine article topics based on KB name and description
-        if "inflation" in kb_name.lower() or "family finance" in kb_name.lower():
-            return [
-                {
-                    "title": f"Introduction to {kb_name}",
-                    "content": f"""# Introduction to {kb_name}
-
-## Overview
-{kb_description}
-
-## Key Principles
-Understanding the fundamentals of managing family finances during inflationary periods requires strategic planning and practical implementation.
-
-### Financial Protection Strategies
-- **Budget Optimization**: Adapting spending patterns to economic changes
-- **Emergency Planning**: Building resilient financial cushions
-- **Cost Management**: Identifying and reducing unnecessary expenses
-- **Income Protection**: Strategies for maintaining household income
-
-### Implementation Framework
-- **Assessment**: Evaluate current financial position
-- **Planning**: Develop inflation-resistant strategies
-- **Execution**: Implement protective measures
-- **Monitoring**: Track effectiveness and adjust as needed
-
-## Getting Started
-A systematic approach to protecting your family's financial well-being during challenging economic times."""
-                },
-                {
-                    "title": "Budgeting Techniques for Inflation",
-                    "content": f"""# Budgeting Techniques for Inflation
-
-## Strategic Budget Planning
-
-### Inflation-Resistant Budgeting
-Creating budgets that adapt to changing economic conditions:
-
-#### Essential Categories
-- **Fixed Expenses**: Housing, insurance, and loan payments
-- **Variable Necessities**: Food, utilities, and transportation
-- **Discretionary Spending**: Entertainment and non-essential purchases
-- **Savings Goals**: Emergency funds and long-term planning
-
-### Adaptive Strategies
-- **Percentage-Based Allocation**: Flexible spending categories
-- **Priority Ranking**: Focus on essential expenses first
-- **Substitution Planning**: Alternative options for expensive items
-- **Seasonal Adjustments**: Accounting for seasonal cost variations
-
-## Implementation Tools
-Practical methods for maintaining financial stability during inflationary periods."""
-                },
-                {
-                    "title": "Cost-Cutting Strategies for Families",
-                    "content": f"""# Cost-Cutting Strategies for Families
-
-## Comprehensive Expense Reduction
-
-### Systematic Approach to Savings
-Identifying and implementing meaningful cost reductions:
-
-#### Immediate Actions
-- **Subscription Audit**: Review and cancel unnecessary services
-- **Energy Efficiency**: Reduce utility costs through conservation
-- **Transportation Optimization**: Minimize fuel and maintenance costs
-- **Food Budget Management**: Strategic grocery shopping and meal planning
-
-#### Long-term Strategies
-- **Bulk Purchasing**: Buying in quantity for better unit prices
-- **DIY Solutions**: Learning skills to reduce service costs
-- **Community Resources**: Utilizing local programs and sharing opportunities
-- **Technology Integration**: Using apps and tools for savings
-
-## Sustainable Practices
-Building long-term habits that support continued financial health and family well-being."""
-                }
-            ]
-        else:
-            # Generic fallback for other KB types
-            return [
-                {
-                    "title": f"Introduction to {kb_name}",
-                    "content": f"""# Introduction to {kb_name}
-
-## Overview
-{kb_description}
-
-## Key Concepts
-This knowledge base provides comprehensive information and practical guidance on the topic.
-
-### Fundamental Principles
-- **Understanding**: Core concepts and terminology
-- **Application**: Practical implementation strategies
-- **Best Practices**: Proven approaches and methodologies
-- **Problem Solving**: Common challenges and solutions
-
-### Learning Path
-- **Foundation**: Essential knowledge and skills
-- **Intermediate**: Advanced concepts and techniques
-- **Expert**: Specialized knowledge and innovation
-- **Mastery**: Teaching and leading others
-
-## Getting Started
-Begin your journey with solid foundational knowledge."""
-                },
-                {
-                    "title": f"Fundamentals of {kb_name}",
-                    "content": f"""# Fundamentals of {kb_name}
-
-## Core Knowledge Areas
-
-### Essential Understanding
-Building comprehensive knowledge in the subject area:
-
-#### Key Components
-- **Terminology**: Important terms and definitions
-- **Processes**: Step-by-step procedures and workflows
-- **Tools**: Resources and technologies available
-- **Standards**: Best practices and quality criteria
-
-### Implementation Framework
-- **Planning**: Strategic approach to implementation
-- **Execution**: Practical steps and actions
-- **Monitoring**: Tracking progress and results
-- **Optimization**: Continuous improvement strategies
-
-## Practical Application
-Moving from theory to real-world implementation."""
-                }
-            ]

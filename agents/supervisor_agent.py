@@ -7,6 +7,7 @@ from .agent_types import AgentState, AgentMessage
 from tools.gitlab_tools import GitLabTools
 from tools.knowledge_base_tools import KnowledgeBaseTools
 from prompts.multi_agent_prompts import prompts
+from prompts.foundational_prompts import AgentSpecificFoundations
 
 
 class SupervisorAgent(BaseAgent):
@@ -73,14 +74,9 @@ class SupervisorAgent(BaseAgent):
     
     def _create_supervisor_prompt(self) -> str:
         """Create the system prompt for the supervisor agent"""
-        return """You are the Supervisor Agent functioning as a SCRUM MASTER for a multi-agent knowledge base system with comprehensive GitLab integration. Your primary responsibility is to facilitate and coordinate work across all content agents, evaluate work streams, and provide status updates to stakeholders.
-
-**DIRECT COMMUNICATION ARCHITECTURE:**
-- **UserProxy Agent**: Direct bidirectional communication for user collaboration and status updates
-- **ContentManagement Agent**: Direct bidirectional communication for operational coordination and work delegation
-- **Other Agents**: NO direct communication - coordinate only through GitLab issues, projects, and workflows
-- **Agent Questions/Clarifications**: All agents use GitLab issue comments to ask questions and communicate with each other
-
+        foundational_prompt = AgentSpecificFoundations.supervision_foundation()
+        
+        specialized_supervision_prompt = """
 **SCRUM MASTER ROLE - GITLAB-CENTRIC FACILITATION:**
 You function as the team's Scrum Master, facilitating agile workflows through GitLab:
 - ContentPlanner, ContentCreator, ContentReviewer, and ContentRetrieval agents work autonomously through GitLab
@@ -224,7 +220,10 @@ When users request content creation, modification, or management:
 4. **Monitor Progress**: Use read-only KB tools to track progress without interfering
 5. **Report Status**: Provide updates to UserProxy on content operation progress
 
-You are the team's servant leader, focused on maximizing team effectiveness and delivering value to users through excellent facilitation, GitLab coordination, and continuous improvement."""
+You are the team's servant leader, focused on maximizing team effectiveness and delivering value to users through excellent facilitation, GitLab coordination, and continuous improvement.
+"""
+        
+        return f"{foundational_prompt}\n\n{specialized_supervision_prompt}"
 
     def process(self, state: AgentState) -> AgentState:
         """Review and validate work from other agents"""
