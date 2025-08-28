@@ -1279,23 +1279,168 @@ class KnowledgeBaseTools():
             print(f"📝 Article Title: {article.title}")
             print(f"📄 Content Length: {len(article.content)} characters")
             print(f"👤 Author ID: {article.author_id}")
-            print(f"🔗 Parent ID: {article.parent_id}")
-            print(f"💾 Executing insert_article...")
+            print(f"🔗 Original Parent ID: {article.parent_id}")
             
             try:
+                # Determine hierarchical parent_id before inserting
+                new_parent_id = self._determine_hierarchical_parent_id(knowledge_base_id, article)
+                if new_parent_id != article.parent_id:
+                    print(f"� Updating parent_id from {article.parent_id} to {new_parent_id}")
+                    article.parent_id = new_parent_id
+                else:
+                    print(f"✅ Parent_id remains: {article.parent_id}")
+                
+                print(f"💾 Executing insert_article with parent_id: {article.parent_id}...")
+                
                 result = kb_Operations.insert_article(knowledge_base_id, article)
                 if result:
                     print(f"✅ SUCCESS: Article created with ID {result.id}")
                     print(f"🎯 Title: {result.title}")
-                    print(f"📝 FIXED: No more created_at access - code updated successfully")
+                    print(f"🏗️ Hierarchical Parent ID: {result.parent_id}")
+                    print(f"📝 HIERARCHY FIX: Applied hierarchical structure successfully")
                 else:
                     print(f"❌ FAILED: insert_article returned None")
                 return result
+                
             except Exception as e:
                 print(f"💥 ERROR in KnowledgeBaseInsertArticle: {str(e)}")
                 import traceback
                 print(f"🔍 Traceback: {traceback.format_exc()}")
                 raise
+
+        def _determine_hierarchical_parent_id(self, knowledge_base_id: str, article: Article.InsertModel) -> str:
+            """Determine the appropriate parent_id for an article based on hierarchy"""
+            print(f"🧭 HIERARCHY: Determining parent_id for '{article.title}'")
+            
+            try:
+                # Get current hierarchy using kb_Operations directly
+                articles = kb_Operations.get_article_hierarchy(knowledge_base_id)
+                print(f"📚 Found {len(articles)} articles in current hierarchy")
+                
+                # Classify article type
+                article_type = self._classify_article_type(article)
+                print(f"📋 Article classified as: {article_type}")
+                
+                if article_type == "category":
+                    # Root categories should have parent_id = None
+                    print(f"🌳 Category article - setting parent_id = None")
+                    return None
+                elif article_type == "subcategory":
+                    # Find best parent category
+                    parent_id = self._find_best_category_parent(article, articles)
+                    print(f"🌿 Subcategory article - found parent: {parent_id}")
+                    return parent_id
+                else:  # content article
+                    # Find best parent subcategory or category
+                    parent_id = self._find_best_subcategory_parent(article, articles)
+                    print(f"📄 Content article - found parent: {parent_id}")
+                    return parent_id
+                    
+            except Exception as e:
+                print(f"💥 ERROR in hierarchy determination: {str(e)}")
+                print(f"🔙 Falling back to original parent_id: {article.parent_id}")
+                return article.parent_id
+
+        def _classify_article_type(self, article: Article.InsertModel) -> str:
+            """Classify article as category, subcategory, or content based on title/content"""
+            title = article.title.lower()
+            content = article.content.lower() if article.content else ""
+            
+            # Category indicators (broad, organizational topics)
+            category_keywords = [
+                "fundamentals", "basics", "introduction", "overview", "guide", 
+                "strategies", "planning", "management", "principles", "foundation"
+            ]
+            
+            # Subcategory indicators (more specific but still organizational)
+            subcategory_keywords = [
+                "techniques", "methods", "approaches", "tools", "tips", 
+                "best practices", "framework", "system", "process"
+            ]
+            
+            # Content indicators (specific, actionable content)
+            content_keywords = [
+                "how to", "step by step", "tutorial", "example", "case study",
+                "specific", "detailed", "implementation", "action", "workflow"
+            ]
+            
+            # Check for content article first (most specific)
+            if any(keyword in title or keyword in content for keyword in content_keywords):
+                return "content"
+            
+            # Check for subcategory (mid-level)
+            if any(keyword in title or keyword in content for keyword in subcategory_keywords):
+                return "subcategory"
+            
+            # Check for category (broad)
+            if any(keyword in title or keyword in content for keyword in category_keywords):
+                return "category"
+            
+            # Default to content if uncertain
+            return "content"
+
+        def _find_best_category_parent(self, article: Article.InsertModel, articles: list) -> str:
+            """Find the best category parent for a subcategory article"""
+            # Look for root level articles (parent_id = None)
+            root_articles = [a for a in articles if getattr(a, 'parent_id', None) is None]
+            
+            if not root_articles:
+                print(f"� No root categories found - returning None")
+                return None
+            
+            # Simple matching based on title similarity
+            article_title = article.title.lower()
+            best_match = None
+            best_score = 0
+            
+            for root_article in root_articles:
+                root_title = getattr(root_article, 'title', '').lower()
+                # Count common words
+                article_words = set(article_title.split())
+                root_words = set(root_title.split())
+                common_words = article_words.intersection(root_words)
+                score = len(common_words)
+                
+                if score > best_score:
+                    best_score = score
+                    best_match = getattr(root_article, 'id', None)
+            
+            if best_match:
+                print(f"🎯 Best category parent match: {best_match} (score: {best_score})")
+            else:
+                print(f"🎯 No good category match found - using first root article")
+                best_match = getattr(root_articles[0], 'id', None)
+            
+            return best_match
+
+        def _find_best_subcategory_parent(self, article: Article.InsertModel, articles: list) -> str:
+            """Find the best subcategory or category parent for a content article"""
+            # Look for subcategory articles first (articles with parent_id not None)
+            subcategory_articles = [a for a in articles if getattr(a, 'parent_id', None) is not None]
+            
+            if subcategory_articles:
+                # Try to find best subcategory match
+                article_title = article.title.lower()
+                best_match = None
+                best_score = 0
+                
+                for sub_article in subcategory_articles:
+                    sub_title = getattr(sub_article, 'title', '').lower()
+                    article_words = set(article_title.split())
+                    sub_words = set(sub_title.split())
+                    common_words = article_words.intersection(sub_words)
+                    score = len(common_words)
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_match = getattr(sub_article, 'id', None)
+                
+                if best_match and best_score > 0:
+                    print(f"🎯 Best subcategory parent match: {best_match} (score: {best_score})")
+                    return best_match
+            
+            # Fall back to category parent
+            return self._find_best_category_parent(article, articles)
         
     # KnowledgeBase UpdateArticle
     class KnowledgeBaseUpdateArticle(BaseTool):

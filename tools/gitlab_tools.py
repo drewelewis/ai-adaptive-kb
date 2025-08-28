@@ -840,6 +840,258 @@ class GitLabTools:
             
             return result
 
+    class GitLabAddCommentTool(BaseTool):
+        name: str = "GitLabAddCommentTool"
+        description: str = """
+            A tool to add a comment to a GitLab issue.
+            Requires the project ID, issue IID (issue number), and comment text.
+            Returns information about the created comment.
+        """.strip()
+        return_direct: bool = False
+    
+        class GitLabAddCommentToolInputModel(BaseModel):
+            project_id: str = Field(description="The GitLab project ID")
+            issue_iid: str = Field(description="The issue IID (issue number)")
+            comment: str = Field(description="Comment text to add to the issue")
+            agent_name: str = Field(description="Name of the agent adding the comment", default=None)
+
+            @field_validator("project_id")
+            @classmethod
+            def validate_project_id(cls, v):
+                if not v:
+                    raise ValueError("GitLabAddCommentTool error: project_id parameter is empty")
+                return v
+            
+            @field_validator("issue_iid")
+            @classmethod
+            def validate_issue_iid(cls, v):
+                if not v:
+                    raise ValueError("GitLabAddCommentTool error: issue_iid parameter is empty")
+                return v
+                
+            @field_validator("comment")
+            @classmethod
+            def validate_comment(cls, v):
+                if not v or not v.strip():
+                    raise ValueError("GitLabAddCommentTool error: comment parameter is empty")
+                return v.strip()
+                
+        args_schema: Optional[ArgsSchema] = GitLabAddCommentToolInputModel
+
+        def _run(self, project_id: str, issue_iid: str, comment: str, agent_name: str = None) -> str:
+            print(f"🔧 TOOL: GitLabAddCommentTool CALLED")
+            print(f"📝 Parameters:")
+            print(f"   - Project ID: {project_id}")
+            print(f"   - Issue IID: {issue_iid}")
+            print(f"   - Agent Name: {agent_name}")
+            print(f"   - Comment: {comment[:100]}{'...' if len(comment) > 100 else ''}")
+            
+            # Create agent-specific GitLab operations if agent_name is provided
+            if agent_name:
+                try:
+                    gitlab_ops = GitLabOperations(agent_name=agent_name)
+                    print(f"🤖 Using agent-specific GitLab authentication for {agent_name}")
+                except Exception as e:
+                    print(f"⚠️  Failed to create agent-specific GitLab client for {agent_name}: {e}")
+                    print(f"🔄 Falling back to default GitLab operations")
+                    gitlab_ops = gitlab_operations
+            else:
+                gitlab_ops = gitlab_operations
+            
+            result = gitlab_ops.add_issue_comment(project_id, issue_iid, comment, agent_name)
+            
+            if not result or not result.get('success'):
+                error_msg = result.get('error', 'Unknown error') if result else 'Failed to add comment'
+                print(f"❌ Failed to add comment: {error_msg}")
+                return f"❌ Failed to add comment to issue #{issue_iid} in project {project_id}: {error_msg}"
+            
+            print(f"✅ Comment added successfully")
+            response = f"✅ Successfully added comment to GitLab issue #{issue_iid}:\n\n"
+            if 'id' in result:
+                response += f"🆔 Comment ID: {result['id']}\n"
+            if 'author' in result:
+                response += f"👤 Author: {result['author']}\n"
+            if agent_name:
+                response += f"🤖 Agent: {agent_name}\n"
+            if 'created_at' in result:
+                response += f"📅 Created: {result['created_at']}\n"
+            response += f"💬 Comment: {comment[:200]}{'...' if len(comment) > 200 else ''}\n"
+            
+            return response
+
+    class GitLabUpdateIssueTool(BaseTool):
+        name: str = "GitLabUpdateIssueTool"
+        description: str = """
+            A tool to update a GitLab issue.
+            Requires the project ID and issue IID (issue number).
+            Optionally update title, description, state, labels, or assignees.
+            Use state_event 'close' to close an issue or 'reopen' to reopen it.
+            Returns information about the updated issue.
+        """.strip()
+        return_direct: bool = False
+    
+        class GitLabUpdateIssueToolInputModel(BaseModel):
+            project_id: str = Field(description="The GitLab project ID")
+            issue_iid: str = Field(description="The issue IID (issue number)")
+            title: Optional[str] = Field(default=None, description="New issue title (optional)")
+            description: Optional[str] = Field(default=None, description="New issue description (optional)")
+            state_event: Optional[str] = Field(default=None, description="State change: 'close' or 'reopen' (optional)")
+            labels: Optional[str] = Field(default=None, description="Comma-separated list of labels (optional)")
+            agent_name: Optional[str] = Field(default=None, description="Name of the agent updating the issue")
+
+            @field_validator("project_id")
+            @classmethod
+            def validate_project_id(cls, v):
+                if not v:
+                    raise ValueError("GitLabUpdateIssueTool error: project_id parameter is empty")
+                return v
+            
+            @field_validator("issue_iid")
+            @classmethod
+            def validate_issue_iid(cls, v):
+                if not v:
+                    raise ValueError("GitLabUpdateIssueTool error: issue_iid parameter is empty")
+                return v
+                
+            @field_validator("state_event")
+            @classmethod
+            def validate_state_event(cls, v):
+                if v and v not in ['close', 'reopen']:
+                    raise ValueError("GitLabUpdateIssueTool error: state_event must be 'close' or 'reopen'")
+                return v
+                
+        args_schema: Optional[ArgsSchema] = GitLabUpdateIssueToolInputModel
+
+        def _run(self, project_id: str, issue_iid: str, title: Optional[str] = None, 
+                description: Optional[str] = None, state_event: Optional[str] = None, 
+                labels: Optional[str] = None, agent_name: Optional[str] = None) -> str:
+            print(f"🔧 TOOL: GitLabUpdateIssueTool CALLED")
+            print(f"📝 Parameters:")
+            print(f"   - Project ID: {project_id}")
+            print(f"   - Issue IID: {issue_iid}")
+            print(f"   - Agent Name: {agent_name}")
+            print(f"   - Title: {title}")
+            print(f"   - Description: {description[:100] + '...' if description and len(description) > 100 else description}")
+            print(f"   - State Event: {state_event}")
+            print(f"   - Labels: {labels}")
+            
+            # Convert labels string to list if provided
+            labels_list = None
+            if labels:
+                labels_list = [label.strip() for label in labels.split(',') if label.strip()]
+            
+            # Create agent-specific GitLab operations if agent_name is provided
+            if agent_name:
+                try:
+                    gitlab_ops = GitLabOperations(agent_name=agent_name)
+                    print(f"🤖 Using agent-specific GitLab authentication for {agent_name}")
+                except Exception as e:
+                    print(f"⚠️  Failed to create agent-specific GitLab client for {agent_name}: {e}")
+                    print(f"🔄 Falling back to default GitLab operations")
+                    gitlab_ops = gitlab_operations
+            else:
+                gitlab_ops = gitlab_operations
+            
+            result = gitlab_ops.update_issue(
+                project_id, issue_iid, title, description, state_event, labels_list, None, agent_name
+            )
+            
+            if not result or not result.get('success'):
+                error_msg = result.get('error', 'Unknown error') if result else 'Failed to update issue'
+                print(f"❌ Failed to update issue: {error_msg}")
+                return f"❌ Failed to update issue #{issue_iid} in project {project_id}: {error_msg}"
+            
+            print(f"✅ Issue updated successfully")
+            response = f"✅ Successfully updated GitLab issue #{issue_iid}:\n\n"
+            if 'id' in result:
+                response += f"🆔 Issue ID: {result['id']}\n"
+            if agent_name:
+                response += f"🤖 Updated by Agent: {agent_name}\n"
+            if 'title' in result:
+                response += f"📝 Title: {result['title']}\n"
+            if 'state' in result:
+                response += f"📊 State: {result['state']}\n"
+            if 'labels' in result:
+                response += f"🏷️ Labels: {', '.join(result['labels']) if result['labels'] else 'None'}\n"
+            if 'web_url' in result:
+                response += f"🔗 URL: {result['web_url']}\n"
+            if 'updated_at' in result:
+                response += f"⏰ Updated: {result['updated_at']}\n"
+            
+            return response
+
+    class GitLabCloseIssueTool(BaseTool):
+        name: str = "GitLabCloseIssueTool"
+        description: str = """
+            A tool to close a GitLab issue.
+            Requires the project ID and issue IID (issue number).
+            Optionally add a closing comment.
+            Returns information about the closed issue.
+        """.strip()
+        return_direct: bool = False
+    
+        class GitLabCloseIssueToolInputModel(BaseModel):
+            project_id: str = Field(description="The GitLab project ID")
+            issue_iid: str = Field(description="The issue IID (issue number)")
+            comment: Optional[str] = Field(default=None, description="Optional closing comment")
+            agent_name: Optional[str] = Field(default=None, description="Name of the agent closing the issue")
+
+            @field_validator("project_id")
+            @classmethod
+            def validate_project_id(cls, v):
+                if not v:
+                    raise ValueError("GitLabCloseIssueTool error: project_id parameter is empty")
+                return v
+            
+            @field_validator("issue_iid")
+            @classmethod
+            def validate_issue_iid(cls, v):
+                if not v:
+                    raise ValueError("GitLabCloseIssueTool error: issue_iid parameter is empty")
+                return v
+                
+        args_schema: Optional[ArgsSchema] = GitLabCloseIssueToolInputModel
+
+        def _run(self, project_id: str, issue_iid: str, comment: Optional[str] = None, agent_name: Optional[str] = None) -> str:
+            print(f"🔧 TOOL: GitLabCloseIssueTool CALLED")
+            print(f"📝 Parameters:")
+            print(f"   - Project ID: {project_id}")
+            print(f"   - Issue IID: {issue_iid}")
+            print(f"   - Agent Name: {agent_name}")
+            print(f"   - Comment: {comment[:100] + '...' if comment and len(comment) > 100 else comment}")
+            
+            # Create agent-specific GitLab operations if agent_name is provided
+            if agent_name:
+                try:
+                    gitlab_ops = GitLabOperations(agent_name=agent_name)
+                    print(f"🤖 Using agent-specific GitLab authentication for {agent_name}")
+                except Exception as e:
+                    print(f"⚠️  Failed to create agent-specific GitLab client for {agent_name}: {e}")
+                    print(f"🔄 Falling back to default GitLab operations")
+                    gitlab_ops = gitlab_operations
+            else:
+                gitlab_ops = gitlab_operations
+            
+            result = gitlab_ops.close_issue(project_id, issue_iid, comment, agent_name)
+            
+            if not result or not result.get('success'):
+                error_msg = result.get('error', 'Unknown error') if result else 'Failed to close issue'
+                print(f"❌ Failed to close issue: {error_msg}")
+                return f"❌ Failed to close issue #{issue_iid} in project {project_id}: {error_msg}"
+            
+            print(f"✅ Issue closed successfully")
+            response = f"✅ Successfully closed GitLab issue #{issue_iid}:\n\n"
+            if 'id' in result:
+                response += f"🆔 Issue ID: {result['id']}\n"
+            if agent_name:
+                response += f"🤖 Closed by Agent: {agent_name}\n"
+            if 'state' in result:
+                response += f"📊 State: {result['state']}\n"
+            if comment:
+                response += f"💬 Closing comment added\n"
+            
+            return response
+
     class GitLabCreateProjectTool(BaseTool):
         name: str = "GitLabCreateProjectTool"
         description: str = """
@@ -1398,6 +1650,9 @@ class GitLabTools:
             self.GitLabGetProjectIssuesTool(),
             self.GitLabGetIssueDetailsTool(),
             self.GitLabGetUserAssignedIssuesTool(),
+            self.GitLabAddCommentTool(),
+            self.GitLabUpdateIssueTool(),
+            self.GitLabCloseIssueTool(),
             self.GitLabCreateKBWorkItemsTool(),
             self.GitLabGetWorkItemsTool(),
             self.GitLabGetWorkItemDetailsTool(),

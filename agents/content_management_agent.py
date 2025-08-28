@@ -1006,7 +1006,7 @@ IMPORTANT:
             self.log(f"🔍 Searching project {project_id} for exact title match...")
             
             # Use the existing GitLabOperations for duplicate detection
-            gitlab_ops = GitLabOperations()
+            gitlab_ops = GitLabOperations(agent_name=self.__class__.__name__)
             duplicate_exists = gitlab_ops.check_duplicate_issue(project_id, title_search)
             
             if duplicate_exists:
@@ -2402,7 +2402,7 @@ Beginning execution of planned workflow...
             from operations.gitlab_operations import GitLabOperations
             
             # Use GitLabOperations which has built-in duplicate detection
-            gitlab_ops = GitLabOperations()
+            gitlab_ops = GitLabOperations(agent_name=self.__class__.__name__)
             result = gitlab_ops.create_issue_with_duplicate_check(
                 project_id=project_id,
                 title=title,
@@ -2424,10 +2424,17 @@ Beginning execution of planned workflow...
     def _add_issue_comment(self, project_id: str, issue_id: str, comment: str) -> bool:
         """Add a comment to a GitLab issue"""
         try:
-            # GitLab API typically doesn't have a separate comment tool
-            # Comments are usually added when updating issues
-            # This would need to be implemented based on available GitLab tools
-            return True
+            # Find the GitLab comment tool
+            for tool in self.tools:
+                if hasattr(tool, 'name') and tool.name == 'GitLabAddCommentTool':
+                    # Pass the agent class name as the agent identifier
+                    agent_name = self.__class__.__name__
+                    result = tool._run(project_id, issue_id, comment, agent_name)
+                    self.log(f"GitLab comment result: {result}")
+                    return '✅' in result
+            
+            self.log(f"GitLabAddCommentTool not found")
+            return False
             
         except Exception as e:
             self.log(f"Error adding issue comment: {str(e)}", "ERROR")
@@ -2436,9 +2443,19 @@ Beginning execution of planned workflow...
     def _update_issue_labels(self, project_id: str, issue_id: str, labels: List[str]) -> bool:
         """Update GitLab issue labels"""
         try:
-            # Use GitLab tools to update issue labels
-            # Implementation depends on available GitLab tools
-            return True
+            # Find the GitLab update issue tool
+            for tool in self.tools:
+                if hasattr(tool, 'name') and tool.name == 'GitLabUpdateIssueTool':
+                    labels_str = ','.join(labels) if labels else ''
+                    # Pass the agent class name as the agent identifier
+                    agent_name = self.__class__.__name__
+                    result = tool._run(project_id, issue_id, labels=labels_str, agent_name=agent_name)
+                    self.log(f"GitLab update labels result: {result}")
+                    return '✅' in result
+            
+            self.log(f"GitLabUpdateIssueTool not found")
+            return False
+            
         except Exception as e:
             self.log(f"Error updating issue labels: {str(e)}", "ERROR")
             return False
@@ -2446,9 +2463,26 @@ Beginning execution of planned workflow...
     def _update_issue_state(self, project_id: str, issue_id: str, state: str) -> bool:
         """Update GitLab issue state (opened/closed)"""
         try:
-            # Use GitLab tools to update issue state
-            # Implementation depends on available GitLab tools
-            return True
+            # Get the agent class name for identification
+            agent_name = self.__class__.__name__
+            
+            # Find the appropriate GitLab tool based on state
+            if state.lower() == 'closed':
+                for tool in self.tools:
+                    if hasattr(tool, 'name') and tool.name == 'GitLabCloseIssueTool':
+                        result = tool._run(project_id, issue_id, f"Issue closed by {agent_name}", agent_name)
+                        self.log(f"GitLab close issue result: {result}")
+                        return '✅' in result
+            elif state.lower() == 'opened':
+                for tool in self.tools:
+                    if hasattr(tool, 'name') and tool.name == 'GitLabUpdateIssueTool':
+                        result = tool._run(project_id, issue_id, state_event='reopen', agent_name=agent_name)
+                        self.log(f"GitLab reopen issue result: {result}")
+                        return '✅' in result
+            
+            self.log(f"GitLab issue state update tool not found for state: {state}")
+            return False
+            
         except Exception as e:
             self.log(f"Error updating issue state: {str(e)}", "ERROR")
             return False

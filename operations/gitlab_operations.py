@@ -9,16 +9,64 @@ from typing import List, Optional, Dict, Any
 class GitLabOperations:
     """GitLab operations using the official python-gitlab library."""
     
-    def __init__(self):
+    def __init__(self, agent_name=None):
         self.gitlab_url = os.getenv('GITLAB_URL', 'http://localhost:8929')
-        self.gitlab_token = os.getenv('GITLAB_PAT')
+        self.agent_name = agent_name
         
-        if not self.gitlab_token:
-            raise ValueError("GitLab Personal Access Token (GITLAB_PAT) is not set in environment variables.")
+        # Try to use agent-specific credentials if agent_name is provided
+        if agent_name:
+            self.gitlab_token = self._get_agent_credentials(agent_name)
+            print(f"GitLab operations ready for {self.gitlab_url} (Agent: {agent_name})")
+        else:
+            # Use default PAT token - try both common environment variable names
+            self.gitlab_token = os.getenv('GITLAB_PAT') or os.getenv('GITLAB_ADMIN_PAT')
+            if not self.gitlab_token:
+                raise ValueError("GITLAB_PAT or GITLAB_ADMIN_PAT environment variable is required when no agent_name is provided")
+            print(f"GitLab operations ready for {self.gitlab_url} (Default credentials)")
         
         # Simple initialization - lazy load the client
         self.gl = None
-        print(f"🔧 GitLab operations ready for {self.gitlab_url}")
+    
+    def _get_agent_credentials(self, agent_name):
+        """Get GitLab credentials for a specific agent."""
+        # Convert agent class name to environment variable format
+        # e.g., "ContentCreatorAgent" -> "CONTENT_CREATOR_AGENT"
+        
+        # Remove 'Agent' suffix if present
+        base_name = agent_name.replace('Agent', '') if agent_name.endswith('Agent') else agent_name
+        
+        # Convert CamelCase to snake_case
+        import re
+        # Insert underscore before uppercase letters (except the first one)
+        snake_case = re.sub('([a-z0-9])([A-Z])', r'\1_\2', base_name)
+        
+        # Convert to uppercase and add AGENT suffix
+        env_agent_name = f"{snake_case.upper()}_AGENT"
+        
+        # Try to get agent-specific PAT token
+        username_key = f"GITLAB_AGENT_{env_agent_name}_USERNAME"
+        pat_key = f"GITLAB_AGENT_{env_agent_name}_PAT"
+        
+        username = os.getenv(username_key)
+        agent_pat = os.getenv(pat_key)
+        
+        print(f"🔍 Looking for credentials for {agent_name}:")
+        print(f"   Username key: {username_key}")
+        print(f"   PAT key: {pat_key}")
+        print(f"   Username found: {username is not None}")
+        print(f"   PAT found: {agent_pat is not None}")
+        
+        if not username:
+            raise ValueError(f"Agent username not found. Missing environment variable: {username_key}")
+        
+        if not agent_pat:
+            raise ValueError(f"Agent PAT token not found. Missing environment variable: {pat_key}")
+        
+        if agent_pat.startswith('glpat-placeholder'):
+            raise ValueError(f"Agent PAT token is still a placeholder. Please set a real PAT token for {agent_name}")
+        
+        print(f"🔐 Using agent-specific credentials for {agent_name} (Username: {username})")
+        return agent_pat
     
     def _ensure_client(self):
         """Lazy initialization of GitLab client."""
@@ -28,12 +76,42 @@ class GitLabOperations:
             session = requests.Session()
             session.timeout = 5
             
-            self.gl = gitlab.Gitlab(
-                self.gitlab_url, 
-                private_token=self.gitlab_token, 
-                session=session
-            )
+            # Check if we should use agent-specific authentication
+            if self.agent_name and not self.gitlab_token:
+                # Get agent-specific username/password
+                env_agent_name = self.agent_name.replace('Agent', '_AGENT').upper()
+                if not env_agent_name.endswith('_AGENT'):
+                    env_agent_name = f"{env_agent_name}_AGENT"
+                
+                import re
+                env_agent_name = re.sub('([A-Z]+)', r'_\1', env_agent_name).upper().strip('_')
+                
+                username_key = f"GITLAB_AGENT_{env_agent_name}_USERNAME"
+                password_key = f"GITLAB_AGENT_{env_agent_name}_PASSWORD"
+                
+                username = os.getenv(username_key)
+                password = os.getenv(password_key)
+                
+                if username and password:
+                    print(f"🔐 Authenticating as {username}")
+                    # Use username/password authentication
+                    self.gl = gitlab.Gitlab(
+                        self.gitlab_url,
+                        username=username,
+                        password=password,
+                        session=session
+                    )
+                else:
+                    raise ValueError(f"Agent credentials not found for {self.agent_name}")
+            else:
+                # Use PAT token authentication
+                self.gl = gitlab.Gitlab(
+                    self.gitlab_url, 
+                    private_token=self.gitlab_token, 
+                    session=session
+                )
             print(f"✅ GitLab client created")
+    
     
     def _create_gitlab_client_with_timeout(self, timeout_seconds=10):
         """Create GitLab client with a timeout mechanism."""
@@ -219,6 +297,11 @@ class GitLabOperations:
         try:
             self._ensure_client()
             project = self.gl.projects.get(project_id)
+            
+            # Add agent attribution to description if agent_name is provided
+            if self.agent_name:
+                agent_attribution = f"\n\n---\nAgent: {self.agent_name}\nThis issue was created by the {self.agent_name} autonomous agent."
+                description = description + agent_attribution
             
             issue_data = {
                 'title': title,
@@ -971,3 +1054,158 @@ This issue manages the deployment, launch, and ongoing maintenance operations fo
         except Exception as e:
             print(f"An error occurred with GitLabOperations.get_work_item_details: {e}")
             return {}
+    
+    def add_issue_comment(self, project_id: str, issue_iid: str, comment: str, agent_name: str = None) -> Dict[str, Any]:
+        """Add a comment to a GitLab issue with optional agent identification."""
+        try:
+            self._ensure_client()
+            project = self.gl.projects.get(project_id)
+            issue = project.issues.get(issue_iid)
+            
+            # Use instance agent_name if none provided
+            effective_agent_name = agent_name or self.agent_name
+            
+            # Post comment without agent identification prefix
+            formatted_comment = comment
+            
+            # Create a note (comment) on the issue
+            note = issue.notes.create({'body': formatted_comment})
+            
+            return {
+                'id': note.id,
+                'body': note.body,
+                'author': note.author.get('name', 'Unknown') if hasattr(note, 'author') and note.author else 'Unknown',
+                'created_at': note.created_at,
+                'updated_at': note.updated_at,
+                'success': True
+            }
+            
+        except Exception as e:
+            print(f"An error occurred with GitLabOperations.add_issue_comment: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def update_issue(self, project_id: str, issue_iid: str, title: str = None, 
+                    description: str = None, state_event: str = None, 
+                    labels: List[str] = None, assignee_ids: List[int] = None, 
+                    agent_name: str = None) -> Dict[str, Any]:
+        """Update a GitLab issue with new title, description, state, labels, or assignees with optional agent identification."""
+        try:
+            self._ensure_client()
+            project = self.gl.projects.get(project_id)
+            issue = project.issues.get(issue_iid)
+            
+            # Prepare update data
+            update_data = {}
+            if title is not None:
+                update_data['title'] = title
+            if description is not None:
+                # Add agent identification to description if provided
+                formatted_description = description
+                if agent_name:
+                    formatted_description = f"{description}\n\n---\n*Updated by Agent: {agent_name}*"
+                update_data['description'] = formatted_description
+            if state_event is not None:
+                update_data['state_event'] = state_event  # 'close' or 'reopen'
+            if labels is not None:
+                update_data['labels'] = labels
+            if assignee_ids is not None:
+                update_data['assignee_ids'] = assignee_ids
+            
+            # Update the issue
+            issue.save(**update_data)
+            
+            # Return updated issue details
+            return {
+                'id': issue.id,
+                'iid': issue.iid,
+                'title': issue.title,
+                'description': issue.description,
+                'state': issue.state,
+                'labels': issue.labels,
+                'web_url': issue.web_url,
+                'updated_at': issue.updated_at,
+                'success': True
+            }
+            
+        except Exception as e:
+            print(f"An error occurred with GitLabOperations.update_issue: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def update_issue_labels(self, project_id: str, issue_iid: str, labels: List[str]) -> Dict[str, Any]:
+        """Update the labels of a GitLab issue."""
+        try:
+            self._ensure_client()
+            project = self.gl.projects.get(project_id)
+            issue = project.issues.get(issue_iid)
+            
+            # Update labels
+            issue.labels = labels
+            issue.save()
+            
+            return {
+                'id': issue.id,
+                'iid': issue.iid,
+                'labels': issue.labels,
+                'success': True
+            }
+            
+        except Exception as e:
+            print(f"An error occurred with GitLabOperations.update_issue_labels: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def close_issue(self, project_id: str, issue_iid: str, comment: str = None, agent_name: str = None) -> Dict[str, Any]:
+        """Close a GitLab issue, optionally with a closing comment and agent identification."""
+        try:
+            self._ensure_client()
+            project = self.gl.projects.get(project_id)
+            issue = project.issues.get(issue_iid)
+            
+            # Use instance agent_name if none provided
+            effective_agent_name = agent_name or self.agent_name
+            
+            # Add comment if provided
+            if comment:
+                formatted_comment = comment
+                issue.notes.create({'body': formatted_comment})
+            
+            # Close the issue
+            issue.state_event = 'close'
+            issue.save()
+            
+            return {
+                'id': issue.id,
+                'iid': issue.iid,
+                'state': issue.state,
+                'success': True
+            }
+            
+        except Exception as e:
+            print(f"An error occurred with GitLabOperations.close_issue: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def reopen_issue(self, project_id: str, issue_iid: str, comment: str = None, agent_name: str = None) -> Dict[str, Any]:
+        """Reopen a GitLab issue, optionally with a reopening comment and agent identification."""
+        try:
+            self._ensure_client()
+            project = self.gl.projects.get(project_id)
+            issue = project.issues.get(issue_iid)
+            
+            # Add comment if provided, with agent identification
+            if comment:
+                formatted_comment = comment
+                issue.notes.create({'body': formatted_comment})
+            
+            # Reopen the issue
+            issue.state_event = 'reopen'
+            issue.save()
+            
+            return {
+                'id': issue.id,
+                'iid': issue.iid,
+                'state': issue.state,
+                'success': True
+            }
+            
+        except Exception as e:
+            print(f"An error occurred with GitLabOperations.reopen_issue: {e}")
+            return {'success': False, 'error': str(e)}

@@ -139,6 +139,30 @@ from utils.unicode_safe_print import safe_print
 
 load_dotenv(override=True)
 
+def clear_logs():
+    """Clear log files when the swarm starts for easier review"""
+    # Ensure logs directory exists
+    logs_dir = 'logs'
+    if not os.path.exists(logs_dir):
+        os.makedirs(logs_dir)
+        print(f"📁 Created logs directory: {logs_dir}")
+    
+    log_files = [
+        'logs/content_agent_swarm.log'
+    ]
+    
+    for log_file in log_files:
+        try:
+            if os.path.exists(log_file):
+                # Clear the log file by opening it in write mode
+                with open(log_file, 'w', encoding='utf-8') as f:
+                    f.write('')  # Clear contents
+                print(f"✅ Cleared log file: {log_file}")
+            else:
+                print(f"ℹ️ Log file doesn't exist yet: {log_file}")
+        except Exception as e:
+            print(f"⚠️ Failed to clear log file {log_file}: {e}")
+
 class AutonomousAgentSwarm:
     """Autonomous Agent Swarm - Runs agents independently to discover and complete work"""
     
@@ -436,15 +460,18 @@ class AutonomousAgentSwarm:
                 try:
                     execution_result = agent._execute_kb_work_to_completion(work_item, work_state)
                     if execution_result.get("success"):
+                        work_type = execution_result.get('work_type', 'kb_management')
                         return {
                             "found_work": True,
-                            "message": f"Completed KB work: {work_item.get('title', 'Unknown')} - {execution_result.get('work_type', 'unknown')}",
+                            "work_type": work_type,  # Add work_type at top level
+                            "message": f"Completed KB work: {work_item.get('title', 'Unknown')} - {work_type}",
                             "work_item": work_item,
                             "execution_result": execution_result
                         }
                     else:
                         return {
                             "found_work": True,
+                            "work_type": "kb_management_failed",  # Add work_type for failed cases
                             "message": f"Found KB work but execution failed: {work_item.get('title', 'Unknown')}",
                             "work_item": work_item,
                             "execution_error": execution_result.get("error", "Unknown error")
@@ -587,6 +614,7 @@ class AutonomousAgentSwarm:
                     if can_take_work:
                         return {
                             "found_work": True,
+                            "work_type": "gitlab_issue",  # Add work_type for proper routing
                             "message": f"Found work: {issue.get('title')} (#{issue.get('iid')})",
                             "work_item": {
                                 "id": issue.get("id"),
@@ -643,11 +671,19 @@ class AutonomousAgentSwarm:
             # Execute based on work type
             print(f"DEBUG: Checking execution routing for work_type={work_type}, agent_name={agent_name}")
             
-            # Check if this is a GitLab issue (has work_item with GitLab properties)
+            # Check if this is a GitLab issue (explicit work_type or GitLab properties)
             work_item = work_result.get("work_item")
-            if work_item and "iid" in work_item and "project_id" in work_item:
+            if work_type == "gitlab_issue" or (work_item and "iid" in work_item and "project_id" in work_item):
                 print(f"DEBUG: Routing to GitLab issue execution")
                 return self._execute_gitlab_issue_work(agent, work_item, agent_name)
+            elif work_type in ["kb_management", "structure_foundation", "taxonomy_foundation"]:
+                # KB management work already completed, just return success
+                execution_result = work_result.get("execution_result", {})
+                return {
+                    "success": True,
+                    "summary": f"KB management work completed: {work_type}",
+                    "details": execution_result
+                }
             elif work_type == "autonomous_strategic" and agent_name == "ContentCreatorAgent":
                 # Execute strategic content creation
                 print(f"DEBUG: Routing to _execute_strategic_content_creation")
@@ -1127,11 +1163,9 @@ class AutonomousAgentSwarm:
                 # Display root articles if any exist
                 if root_articles:
                     safe_print(f"   📋 Root Articles:")
-                    for j, root_article in enumerate(root_articles[:5], 1):  # Show first 5
+                    for j, root_article in enumerate(root_articles, 1):  # Show ALL articles
                         title = root_article[2] if len(root_article) > 2 else "Untitled"  # Assuming title is at index 2
                         safe_print(f"      {j}. {title[:50]}{'...' if len(title) > 50 else ''}")
-                    if len(root_articles) > 5:
-                        safe_print(f"      ... and {len(root_articles) - 5} more root articles")
                 else:
                     safe_print(f"   📋 No root articles found")
                 
@@ -1268,6 +1302,9 @@ class AutonomousAgentSwarm:
             safe_print(f"❌ Error generating knowledge base summary: {e}")
 
 def main():
+    # Clear logs at startup for easier review
+    clear_logs()
+    
     logger.info("=" * 80)
     logger.info("🔥 AI ADAPTIVE KNOWLEDGE BASE - AUTONOMOUS AGENT SWARM STARTING")
     logger.info("🚀 PostgreSQL State Management | GitLab Coordination | Autonomous Execution")

@@ -38,7 +38,7 @@ class BaseAgent(ABC):
         self.has_gitlab_credentials = True  # Always true since we use PAT token
         
         # Log GitLab setup status
-        self.log(f"✅ GitLab integration enabled - Username: {self.gitlab_username}")
+        self.log(f"GitLab integration enabled - Username: {self.gitlab_username}")
         
         # Initialize KB context from environment if available
         self._initialize_kb_context()

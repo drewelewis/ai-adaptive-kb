@@ -1,6 +1,7 @@
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import os
+import re
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 from langchain_openai import AzureChatOpenAI
 from .base_agent import BaseAgent
@@ -201,8 +202,7 @@ When creating content, leverage GitLab's collaborative features to ensure alignm
         - Educational content and courses
         - White papers and industry reports
         
-        Create content with this future adaptability in mind - comprehensive, authoritative material 
-        that can be easily restructured and repurposed for different formats and audiences.
+        Create content with this future adaptability in mind - content that can be easily restructured and repurposed for different formats and audiences.
         
         MULTI-KB CONTENT CREATION PRINCIPLES:
         1. **KB Context Verification**: Always confirm which KB you're creating content for
@@ -210,54 +210,45 @@ When creating content, leverage GitLab's collaborative features to ensure alignm
         3. **Cross-KB Prevention**: Never reference or link content from different KBs
         4. **Context Communication**: Always specify which KB your content belongs to
         5. **KB Transition Management**: When switching KB contexts, explicitly acknowledge the change
-        
+
         Your core responsibilities:
-        - Create comprehensive, authoritative content that demonstrates true expertise for specific KBs
+        - Create content appropriate to the hierarchy level being requested
         - Research thoroughly to ensure accuracy and completeness within the target KB's domain
-        - Write in-depth articles that progress from foundational to advanced concepts for the specific KB
-        - Build comprehensive knowledge bases that serve as definitive resources in their domains
+        - Build logical knowledge bases that follow the foundational hierarchy structure
         - Create natural cross-references and content relationships WITHIN the same KB only
         - Work autonomously following strategic plans from ContentPlanner for specific KBs
         - Design content that supports multiple future repurposing scenarios for the target KB
         
-        Content Creation Philosophy:
-        - EXPERT AUTHORITY: Write as a subject matter expert with deep understanding
-        - COMPREHENSIVE DEPTH: Cover topics thoroughly, not superficially
-        - PRACTICAL VALUE: Include real-world applications, examples, and use cases
-        - LOGICAL PROGRESSION: Structure content from basics to advanced systematically
-        - REPURPOSING-READY: Create content that can be easily adapted for different formats
-        - AUTONOMOUS EXECUTION: Work independently without requiring constant oversight
-        - QUALITY OVER SPEED: Focus on creating definitive, publication-ready content
+        Content Creation Approach by Hierarchy Level:
+        - **Level 1 (Categories)**: Simple categorical overviews with broad topic organization
+        - **Level 2 (Subcategories)**: Focused domain knowledge with moderate depth
+        - **Level 3+ (Articles)**: Expert-written, authoritative, comprehensive content with detailed implementation
         
-        Writing Standards:
-        - Expert-level accuracy and authority in all domains
-        - Clear, engaging prose that maintains professional quality
-        - Comprehensive coverage that leaves no critical gaps
-        - Practical examples and real-world applications
-        - Proper structure with clear headings and logical flow
-        - Cross-references to related concepts and articles
-        - Content suitable for multiple output formats (marketing, educational, etc.)
+        Writing Standards by Hierarchy Level:
+        - **Level 1**: Introductory tone, categorical organization, general concepts (300-500 words)
+        - **Level 2**: Informative tone, focused expertise, domain-specific knowledge (500-800 words)
+        - **Level 3+**: Expert authority, comprehensive depth, practical implementation (800-1500 words)
         
         Content Creation Process:
-        1. Analyze the content strategy from ContentPlanner
-        2. Research the domain thoroughly to ensure expertise
-        3. Create comprehensive articles following the planned hierarchy
-        4. Build natural relationships and cross-references
-        5. Ensure each article meets publication-ready standards
+        1. Determine the hierarchy level for the content being created
+        2. Apply the appropriate content approach and writing standards for that level
+        3. Research the domain appropriately for the level of depth required
+        4. Create content following the foundational hierarchy guidance
+        5. Build natural relationships and cross-references
         6. Progress systematically through the entire knowledge base
         
         Domain Adaptation:
-        - Technical topics: Include theory, implementation, and practical examples
-        - Business topics: Cover strategy, tactics, and real-world case studies
-        - Educational content: Progress from fundamentals to advanced applications
-        - Creative fields: Balance theory with practical techniques and inspiration
+        - Technical topics: Include theory, implementation, and practical examples (at appropriate level)
+        - Business topics: Cover strategy, tactics, and real-world case studies (at appropriate level)
+        - Educational content: Progress from fundamentals to advanced applications (at appropriate level)
+        - Creative fields: Balance theory with practical techniques and inspiration (at appropriate level)
         
         Quality Indicators:
-        - Content demonstrates genuine expertise and understanding
-        - Articles are comprehensive and leave no critical knowledge gaps
-        - Writing is clear, engaging, and professionally structured
-        - Cross-references enhance learning and knowledge navigation
-        - Content is immediately ready for publication use
+        - Content matches the appropriate hierarchy level standards
+        - Content depth and complexity align with the level being created
+        - Writing style and tone match the hierarchy level expectations
+        - Content supports logical progression through the knowledge base hierarchy
+        - Content is ready for the intended repurposing scenarios
         """
     
     def process(self, state: AgentState) -> AgentState:
@@ -288,14 +279,11 @@ When creating content, leverage GitLab's collaborative features to ensure alignm
         else:
             self.log("DEBUG: No KB ID provided - this could be the problem!")
         
-        # Execute content creation workflow
-        creation_result = self._execute_content_creation(
-            latest_request.content,
-            content_strategy,
-            article_hierarchy,
-            implementation_plan,
-            kb_id,
-            state
+        # Use clean content creation method (no manual processing)
+        creation_result = self._execute_article_creation(
+            kb_id=kb_id,
+            title=content_strategy.get('scope', 'Content Creation'),
+            description=latest_request.content
         )
         
         # Send completed content to ContentReviewer
@@ -328,313 +316,8 @@ When creating content, leverage GitLab's collaborative features to ensure alignm
         
         self.log("Content creation completed, routing to ContentReviewer")
         return state
-    
-    def _execute_content_creation(self, request: str, strategy: Dict, hierarchy: Dict, 
-                                implementation: Dict, kb_id: int, state: AgentState) -> Dict[str, Any]:
-        """Execute the comprehensive content creation workflow"""
-        
-        messages = self.get_messages_with_history(state)
-        messages.append(HumanMessage(content=f"""
-            Create comprehensive articles for this knowledge base:
-            
-            Original Request: {request}
-            Content Strategy: {strategy}
-            Article Hierarchy: {hierarchy}  
-            Implementation Plan: {implementation}
-            Knowledge Base ID: {kb_id}
-            
-            Please create 3-5 comprehensive articles for this knowledge base. For each article, provide:
-            
-            ARTICLE FORMAT (use this exact format for each article):
-            ---ARTICLE START---
-            TITLE: [Article title here]
-            CONTENT: [Comprehensive article content here - minimum 300 words]
-            ---ARTICLE END---
-            
-            Create articles that cover:
-            - Introduction/overview topics
-            - Core concepts and fundamentals  
-            - Practical applications and examples
-            - Advanced topics if applicable
-            
-            Each article should be:
-            - 300-800 words of expert-level content
-            - Well-structured with clear headings and explanations
-            - Include practical examples and real-world applications
-            - Demonstrate true expertise in the subject matter
-            
-            Create publication-ready content that serves as a comprehensive resource.
-            """))
-        
-        try:
-            self.log(f"DEBUG: Invoking o1 model for content creation (KB ID: {kb_id})")
-            # Use regular LLM for o1 (no tool binding needed)
-            response = self.llm.invoke(messages)
-            self.log(f"DEBUG: LLM response received, type: {type(response)}")
-            return self._process_o1_response(response, kb_id, state)
-        except Exception as e:
-            self.log(f"DEBUG: Exception during content creation: {str(e)}")
-            import traceback
-            self.log(f"DEBUG: Traceback: {traceback.format_exc()}")
-            return {
-                "error": f"Error during content creation: {str(e)}",
-                "articles_created": [],
-                "kb_structure": {}
-            }
-    
-    def _process_o1_response(self, response, kb_id: int, state: AgentState) -> Dict[str, Any]:
-        """Process o1 response and manually create articles"""
-        articles_created = []
-        kb_structure = {}
-        
-        try:
-            content = response.content if hasattr(response, 'content') else str(response)
-            self.log(f"DEBUG: Processing o1 response content (length: {len(content)})")
-            
-            # First try the exact format we requested
-            import re
-            article_pattern = r'---ARTICLE START---(.*?)---ARTICLE END---'
-            article_matches = re.findall(article_pattern, content, re.DOTALL)
-            
-            self.log(f"DEBUG: Found {len(article_matches)} articles with exact format")
-            
-            # If exact format didn't work, try alternative parsing
-            if len(article_matches) == 0:
-                self.log("DEBUG: Exact format failed, trying alternative parsing...")
-                articles_created = self._parse_alternative_formats(content, kb_id)
-            else:
-                # Process exact format articles
-                for i, article_content in enumerate(article_matches):
-                    try:
-                        # Extract title and content
-                        title_match = re.search(r'TITLE:\s*(.+)', article_content)
-                        content_match = re.search(r'CONTENT:\s*(.*)', article_content, re.DOTALL)
-                        
-                        if title_match and content_match:
-                            title = title_match.group(1).strip()
-                            article_text = content_match.group(1).strip()
-                            
-                            self.log(f"DEBUG: Creating article: {title}")
-                            
-                            # Manually call the insert article tool
-                            insert_tool = next((t for t in self.tools if t.name == 'KnowledgeBaseInsertArticle'), None)
-                            if insert_tool:
-                                # Import the Article model
-                                from models.article import Article
-                                
-                                # Create proper Article.InsertModel
-                                article_obj = Article.InsertModel(
-                                    title=title,
-                                    content=article_text,
-                                    knowledge_base_id=int(kb_id),  # Ensure integer
-                                    author_id=1
-                                )
-                                
-                                # Call tool with correct parameters - use _run method directly
-                                result = insert_tool._run(
-                                    knowledge_base_id=str(kb_id),
-                                    article=article_obj
-                                )
-                                
-                                articles_created.append({
-                                    "title": title,
-                                    "result": result
-                                })
-                                self.log(f"DEBUG: Article created successfully: {title}")
-                            else:
-                                self.log(f"DEBUG: KnowledgeBaseInsertArticle tool not found")
-                        else:
-                            self.log(f"DEBUG: Could not parse article {i+1} - missing title or content")
-                            
-                    except Exception as e:
-                        self.log(f"DEBUG: Error creating article {i+1}: {str(e)}")
-                        
-        except Exception as e:
-            self.log(f"DEBUG: Error parsing o1 response: {str(e)}")
-        
-        self.log(f"DEBUG: Total articles created: {len(articles_created)}")
-        
-        return {
-            "articles_created": articles_created,
-            "kb_structure": kb_structure,
-            "content_summary": content[:500] + "..." if len(content) > 500 else content,
-            "creation_status": "completed",
-            "quality_level": "expert"
-        }
-    
-    def _parse_alternative_formats(self, content: str, kb_id: int) -> List[Dict[str, Any]]:
-        """Try alternative parsing methods when exact format fails"""
-        articles_created = []
-        
-        try:
-            import re
-            
-            # Method 1: Look for numbered lists with titles
-            # Pattern: "1. Title\nContent\n\n2. Title\nContent"
-            numbered_pattern = r'(\d+\.\s*[^\n]+)(.*?)(?=\d+\.\s*[^\n]+|\Z)'
-            numbered_matches = re.findall(numbered_pattern, content, re.DOTALL)
-            
-            if numbered_matches:
-                self.log(f"DEBUG: Found {len(numbered_matches)} articles with numbered format")
-                for i, (title_line, article_content) in enumerate(numbered_matches):
-                    title = re.sub(r'^\d+\.\s*', '', title_line).strip()
-                    content_text = article_content.strip()
-                    
-                    if len(content_text) > 50:  # Only create if we have substantial content
-                        article = self._create_article(title, content_text, kb_id)
-                        if article:
-                            articles_created.append(article)
-            
-            # Method 2: Look for heading-based structure
-            # Pattern: "# Title\nContent" or "## Title\nContent"
-            if not articles_created:
-                heading_pattern = r'(#{1,3}\s*[^\n]+)(.*?)(?=#{1,3}\s*[^\n]+|\Z)'
-                heading_matches = re.findall(heading_pattern, content, re.DOTALL)
-                
-                if heading_matches:
-                    self.log(f"DEBUG: Found {len(heading_matches)} articles with heading format")
-                    for title_line, article_content in heading_matches:
-                        title = re.sub(r'^#+\s*', '', title_line).strip()
-                        content_text = article_content.strip()
-                        
-                        if len(content_text) > 50:
-                            article = self._create_article(title, content_text, kb_id)
-                            if article:
-                                articles_created.append(article)
-            
-            # Method 3: Look for "Title:" pattern
-            if not articles_created:
-                title_pattern = r'([A-Z][^:\n]*:)\s*(.*?)(?=[A-Z][^:\n]*:|\Z)'
-                title_matches = re.findall(title_pattern, content, re.DOTALL)
-                
-                if title_matches:
-                    self.log(f"DEBUG: Found {len(title_matches)} articles with title: format")
-                    for title_line, article_content in title_matches:
-                        title = title_line.replace(':', '').strip()
-                        content_text = article_content.strip()
-                        
-                        if len(content_text) > 50:
-                            article = self._create_article(title, content_text, kb_id)
-                            if article:
-                                articles_created.append(article)
-            
-            # Method 4: If all else fails, create articles based on topic keywords
-            if not articles_created:
-                self.log("DEBUG: Trying keyword-based article creation...")
-                # Look for common topic indicators
-                topics = []
-                if 'lists' in content.lower() or 'list' in content.lower():
-                    topics.append(("Python Lists", "Information about Python lists and their usage."))
-                if 'dict' in content.lower() or 'dictionaries' in content.lower():
-                    topics.append(("Python Dictionaries", "Information about Python dictionaries and their usage."))
-                if 'tuple' in content.lower():
-                    topics.append(("Python Tuples", "Information about Python tuples and their usage."))
-                if 'set' in content.lower():
-                    topics.append(("Python Sets", "Information about Python sets and their usage."))
-                
-                for title, base_content in topics:
-                    # Extract relevant content from the response
-                    content_text = f"{base_content}\n\n{content[:800]}"  # Include part of response
-                    article = self._create_article(title, content_text, kb_id)
-                    if article:
-                        articles_created.append(article)
-        
-        except Exception as e:
-            self.log(f"DEBUG: Error in alternative parsing: {str(e)}")
-        
-        return articles_created
-    
-    def _create_article(self, title: str, content: str, kb_id: int) -> Dict[str, Any]:
-        """Helper method to create a single article"""
-        try:
-            insert_tool = next((t for t in self.tools if t.name == 'KnowledgeBaseInsertArticle'), None)
-            if insert_tool:
-                # Import the Article model
-                from models.article import Article
-                
-                # Create proper Article.InsertModel
-                article_obj = Article.InsertModel(
-                    title=title,
-                    content=content,
-                    knowledge_base_id=int(kb_id),  # Ensure integer
-                    author_id=1
-                )
-                
-                # Call tool with correct parameters - use _run method directly
-                result = insert_tool._run(
-                    knowledge_base_id=str(kb_id),
-                    article=article_obj
-                )
-                
-                # CRITICAL: Apply mandatory tags after article creation
-                self.log(f"DEBUG: About to check for tagging - result: {result}, has_id: {hasattr(result, 'id') if result else 'result_is_none'}")
-                if result and hasattr(result, 'id'):
-                    article_id = result.id
-                    self.log(f"DEBUG: Starting mandatory tagging for article_id: {article_id}, kb_id: {kb_id}")
-                    self._apply_mandatory_tags(article_id, kb_id, title, content)
-                    self.log(f"DEBUG: Finished mandatory tagging for article_id: {article_id}")
-                else:
-                    self.log(f"DEBUG: TAGGING SKIPPED - result: {result}, has_id: {hasattr(result, 'id') if result else 'result_is_none'}")
-                
-                self.log(f"DEBUG: Article created successfully: {title}")
-                return {
-                    "title": title,
-                    "result": result
-                }
-            else:
-                self.log(f"DEBUG: KnowledgeBaseInsertArticle tool not found")
-                return None
-        
-        except Exception as e:
-            self.log(f"DEBUG: Error creating article '{title}': {str(e)}")
-            return None
-    
-    def _process_creation_response(self, response, state: AgentState) -> Dict[str, Any]:
-        """Process the LLM content creation response"""
-        articles_created = []
-        kb_structure = {}
-        
-        # Handle tool calls if present
-        if hasattr(response, 'tool_calls') and response.tool_calls:
-            self.log(f"DEBUG: Processing {len(response.tool_calls)} tool calls")
-            for tool_call in response.tool_calls:
-                try:
-                    self.log(f"DEBUG: Executing tool: {tool_call['name']}")
-                    tool = next((t for t in self.tools if t.name == tool_call['name']), None)
-                    if tool:
-                        result = tool.run(tool_call['args'])
-                        self.log(f"DEBUG: Tool {tool_call['name']} executed successfully")
-                        
-                        # Track article creation
-                        if tool_call['name'] == 'KnowledgeBaseInsertArticle':
-                            articles_created.append({
-                                "title": tool_call['args'].get('title', 'Unknown'),
-                                "result": result
-                            })
-                            self.log(f"DEBUG: Article created: {tool_call['args'].get('title', 'Unknown')}")
-                        
-                        # Track KB structure
-                        elif tool_call['name'] == 'KnowledgeBaseInsertKnowledgeBase':
-                            kb_structure['kb_created'] = result
-                            
-                    else:
-                        self.log(f"DEBUG: Tool {tool_call['name']} not found in available tools")
-                        
-                except Exception as e:
-                    self.log(f"DEBUG: Error executing {tool_call['name']}: {str(e)}")
-        else:
-            self.log("DEBUG: No tool calls found in LLM response - this is the problem!")
-        
-        # Extract content summary
-        content_summary = response.content if hasattr(response, 'content') else str(response)
-        
-        return {
-            "articles_created": articles_created,
-            "kb_structure": kb_structure,
-            "content_summary": content_summary,
-            "creation_status": "completed",
-            "quality_level": "expert"
-        }
+
+    # Dead code removed: _parse_alternative_formats, _create_article, _process_creation_response (manual article creation)
     
     def check_assigned_gitlab_work(self) -> Dict[str, Any]:
         """Check GitLab for work assigned to this agent"""
@@ -1184,8 +867,8 @@ When creating content, leverage GitLab's collaborative features to ensure alignm
                 try:
                     self.log(f"🚀 Executing article creation: {gap['topic']}")
                     
-                    # Use the actual article creation method
-                    execution_result = self._execute_article_creation_simple(
+                    # Use the clean article creation method that trusts the LLM to use tools
+                    execution_result = self._execute_article_creation(
                         kb_id=int(kb_id),
                         title=gap['topic'],
                         description=gap['description']
@@ -1440,22 +1123,22 @@ When creating content, leverage GitLab's collaborative features to ensure alignm
                         "project_id": project_id
                     }
             
-            self.log(f"🎯 Creating content for Knowledge Base ID: {kb_id} (Context: {state.get('knowledge_base_name', 'Unknown')})")
+            self.log(f"Creating content for Knowledge Base ID: {kb_id} (Context: {state.get('knowledge_base_name', 'Unknown')})")
             
             # Add progress update to GitLab
-            progress_comment = f"""🎨 **Content Creation Started**
+            progress_comment = f"""Content Creation Started
 
-**Agent:** ContentCreatorAgent
-**Started:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-**Knowledge Base ID:** {kb_id}
-**Work Item:** {issue_title}
+Agent: ContentCreatorAgent
+Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Knowledge Base ID: {kb_id}
+Work Item: {issue_title}
 
 Creating comprehensive articles for this knowledge base...
 """
             self._add_work_progress_update(project_id, issue_id, progress_comment)
             
-            # Execute content creation
-            creation_result = self._execute_article_creation_simple(kb_id, issue_title, issue_description)
+            # Execute content creation using clean method that trusts the LLM to use tools
+            creation_result = self._execute_article_creation(kb_id, issue_title, issue_description)
             
             if creation_result.get("success", False):
                 articles_created = creation_result.get("articles_created", [])
@@ -1583,260 +1266,26 @@ The content creation process encountered an error. Please review the logs for de
             self.log(f"Error extracting KB ID: {e}")
             return None
 
-    def _execute_article_creation_simple(self, kb_id: int, title: str, description: str) -> Dict[str, Any]:
-        """Execute reliable article creation with guaranteed tagging - NO FALLBACKS"""
+    # Dead code removed: _execute_article_creation_simple, _create_articles_with_guaranteed_tagging, 
+    # _create_single_article_with_guaranteed_tags, _apply_mandatory_tags_and_return_list (manual processing)
+
+    def _execute_article_creation(self, kb_id: int, title: str, description: str) -> Dict[str, Any]:
+        """Execute article creation using LLM with tools directly - with model switching on failure"""
         try:
-            print(f"\n{'='*80}")
-            print(f"🚀 SIMPLIFIED ARTICLE CREATION FOR KB {kb_id}")
-            print(f"{'='*80}")
+            self.log(f"Creating articles for KB {kb_id}: {title}")
             
             # Set KB context
             self._set_kb_context_directly(kb_id)
-            
-            # Get KB context for content generation
             kb_name = self.kb_context.get('knowledge_base_name', 'Unknown')
             kb_description = self.kb_context.get('knowledge_base_description', '')
             
-            print(f"📋 KB: {kb_name}")
-            print(f"📄 Description: {kb_description[:100]}...")
+            # Get existing articles to prevent duplicates
+            existing_articles_info = self._get_existing_articles_for_duplicate_prevention(kb_id)
             
-            # Generate content using LLM (no function calling complexity)
-            content_prompt = f"""Generate 3-4 comprehensive articles about: {kb_name}
-
-KNOWLEDGE BASE: {kb_name}
-DESCRIPTION: {kb_description}
-
-Create practical, actionable articles. Each should be 500-1000 words with markdown formatting.
-
-Format each article exactly as:
----ARTICLE START---
-TITLE: [Clear, descriptive title]
-CONTENT: [Full markdown content with # ## ### headers]
----ARTICLE END---
-
-Generate well-structured articles now."""
-
-            from langchain_core.messages import HumanMessage
-            messages = [HumanMessage(content=content_prompt)]
-            response = self.llm.invoke(messages)
+            # Create clear, direct prompt for LLM with tools - referencing shared foundational standards
+            foundational_guidance = AgentSpecificFoundations.content_creation_foundation()
             
-            # Create articles with guaranteed tagging
-            articles_created = self._create_articles_with_guaranteed_tagging(
-                str(response.content) if hasattr(response, 'content') else str(response), 
-                kb_id
-            )
-            
-            print(f"✅ Created {len(articles_created)} articles with guaranteed tagging")
-            
-            return {
-                "success": True,
-                "articles_created": articles_created,
-                "method": "simplified_no_fallback",
-                "total_articles": len(articles_created)
-            }
-            
-        except Exception as e:
-            self.log(f"Error in simplified article creation: {str(e)}")
-            return {"success": False, "error": str(e)}
-
-    def _create_articles_with_guaranteed_tagging(self, llm_response: str, kb_id: int) -> List[Dict[str, Any]]:
-        """Parse LLM response and create articles with GUARANTEED tagging"""
-        articles_created = []
-        
-        try:
-            import re
-            
-            # Parse articles using regex
-            article_pattern = r'---ARTICLE START---(.*?)---ARTICLE END---'
-            article_matches = re.findall(article_pattern, llm_response, re.DOTALL)
-            
-            self.log(f"🔍 Found {len(article_matches)} articles to create")
-            
-            for i, article_block in enumerate(article_matches):
-                try:
-                    # Extract title and content
-                    title_match = re.search(r'TITLE:\s*(.+)', article_block)
-                    content_match = re.search(r'CONTENT:\s*(.+)', article_block, re.DOTALL)
-                    
-                    if title_match and content_match:
-                        title = title_match.group(1).strip()
-                        content = content_match.group(1).strip()
-                        
-                        self.log(f"🔨 Creating article {i+1}: {title}")
-                        
-                        # Create article with guaranteed tagging
-                        result = self._create_single_article_with_guaranteed_tags(title, content, kb_id)
-                        
-                        if result and result.get('success'):
-                            articles_created.append({
-                                "title": title,
-                                "content_preview": content[:100] + "...",
-                                "article_id": result.get('article_id'),
-                                "tags_applied": result.get('tags_applied', []),
-                                "success": True
-                            })
-                            self.log(f"✅ Article created: {title} with {len(result.get('tags_applied', []))} tags")
-                        else:
-                            self.log(f"❌ Failed to create article: {title}")
-                        
-                except Exception as e:
-                    self.log(f"❌ Error creating article {i+1}: {str(e)}")
-            
-        except Exception as e:
-            self.log(f"❌ Error parsing LLM response: {str(e)}")
-        
-        return articles_created
-
-    def _create_single_article_with_guaranteed_tags(self, title: str, content: str, kb_id: int) -> Dict[str, Any]:
-        """Create a single article and apply tags with GUARANTEED execution"""
-        try:
-            # Find the insert tool
-            insert_tool = next((t for t in self.tools if t.name == 'KnowledgeBaseInsertArticle'), None)
-            if not insert_tool:
-                self.log("❌ KnowledgeBaseInsertArticle tool not found")
-                return {"success": False, "error": "Insert tool not found"}
-            
-            # Create article
-            from models.article import Article
-            article_obj = Article.InsertModel(
-                title=title,
-                content=content,
-                knowledge_base_id=int(kb_id),
-                author_id=1,
-                parent_id=None
-            )
-            
-            # Insert article
-            self.log(f"📝 Inserting article: {title}")
-            result = insert_tool._run(
-                knowledge_base_id=str(kb_id),
-                article=article_obj
-            )
-            
-            # GUARANTEED tagging - this WILL execute
-            tags_applied = []
-            if result and hasattr(result, 'id'):
-                article_id = result.id
-                self.log(f"🏷️ GUARANTEED TAGGING: Starting for article {article_id}")
-                tags_applied = self._apply_mandatory_tags_and_return_list(article_id, kb_id, title, content)
-                self.log(f"🏷️ GUARANTEED TAGGING: Applied {len(tags_applied)} tags to article {article_id}")
-                
-                return {
-                    "success": True,
-                    "article_id": article_id,
-                    "tags_applied": tags_applied,
-                    "result": result
-                }
-            else:
-                self.log(f"❌ Article creation failed - no ID returned for: {title}")
-                return {"success": False, "error": "No article ID returned"}
-                
-        except Exception as e:
-            self.log(f"❌ Error in _create_single_article_with_guaranteed_tags: {str(e)}")
-            return {"success": False, "error": str(e)}
-
-    def _apply_mandatory_tags_and_return_list(self, article_id: int, kb_id: int, title: str, content: str) -> List[str]:
-        """Apply mandatory tags and return the list of applied tags"""
-        try:
-            self.log(f"🏷️ MANDATORY TAGGING STARTED for article {article_id}: {title}")
-            
-            # FOUNDATIONAL REQUIREMENT: Every article needs skill-level + content-type + domain-specific tags
-            
-            # 1. Determine skill level tag
-            skill_level_tag = "beginner"  # Default
-            if any(word in content.lower() for word in ["advanced", "expert", "complex", "sophisticated"]):
-                skill_level_tag = "advanced"
-            elif any(word in content.lower() for word in ["intermediate", "moderate", "basic understanding"]):
-                skill_level_tag = "intermediate"
-            
-            # 2. Determine content type tag  
-            content_type_tag = "guide"  # Default
-            if any(word in title.lower() for word in ["overview", "introduction", "what is", "basics"]):
-                content_type_tag = "overview"
-            elif any(word in content.lower() for word in ["tutorial", "step-by-step", "how to", "walkthrough"]):
-                content_type_tag = "tutorial"
-            elif any(word in content.lower() for word in ["reference", "quick", "lookup", "glossary"]):
-                content_type_tag = "reference"
-            elif any(word in content.lower() for word in ["best practice", "recommendation", "should", "avoid"]):
-                content_type_tag = "best-practices"
-            
-            # 3. Determine domain-specific tags based on KB context (financial planning)
-            domain_tags = []
-            financial_keywords = {
-                "budget": "budgeting",
-                "saving": "savings-strategies", 
-                "investment": "investment-planning",
-                "inflation": "inflation-protection",
-                "family": "family-finance",
-                "cost": "cost-management",
-                "expense": "expense-tracking",
-                "financial": "financial-planning"
-            }
-            
-            for keyword, tag in financial_keywords.items():
-                if keyword in title.lower() or keyword in content.lower():
-                    domain_tags.append(tag)
-            
-            # Ensure we have at least one domain tag
-            if not domain_tags:
-                domain_tags = ["financial-planning"]  # Default domain tag
-            
-            # 4. Create and apply tags
-            tags_to_apply = [skill_level_tag, content_type_tag] + domain_tags[:2]  # Limit to avoid over-tagging
-            
-            applied_tags = []
-            for tag_name in tags_to_apply:
-                success = self._ensure_tag_exists_and_apply(kb_id, article_id, tag_name)
-                if success:
-                    applied_tags.append(tag_name)
-                    
-            self.log(f"✅ Applied {len(applied_tags)} mandatory tags to article {article_id}: {applied_tags}")
-            return applied_tags
-            
-        except Exception as e:
-            self.log(f"❌ Error applying mandatory tags to article {article_id}: {str(e)}")
-            return []
-
-    def _execute_article_creation(self, kb_id: int, title: str, description: str) -> Dict[str, Any]:
-        """Execute the actual article creation process using LLM with tools"""
-        try:
-            print(f"\n{'='*80}")
-            print(f"🚀 STARTING ARTICLE CREATION FOR KB {kb_id}")
-            print(f"{'='*80}")
-            print(f"📝 Title: {title}")
-            print(f"📄 Description: {description[:100]}...")
-            print(f"{'='*80}")
-            
-            self.log(f"Starting article creation for KB {kb_id}")
-            
-            # CRITICAL FIX: Set KB context first using project ID
-            project_id = self._get_project_id_from_kb(kb_id)
-            if project_id:
-                print(f"🔗 Setting KB context from GitLab project {project_id}")
-                self._set_kb_context_from_project(project_id)
-            else:
-                print(f"🔗 Setting KB context directly for KB {kb_id}")
-                self._set_kb_context_directly(kb_id)
-            
-            # Create LLM with tools for actual article creation
-            from langchain_core.tools import Tool
-            
-            # Filter to only article creation tools
-            creation_tools = []
-            for tool in self.tools:
-                if tool.name in ['KnowledgeBaseInsertArticle', 'KnowledgeBaseSetContext', 
-                               'KnowledgeBaseGetArticleHierarchy', 'KnowledgeBaseGetRootLevelArticles']:
-                    creation_tools.append(tool)
-            
-            self.log(f"Available creation tools: {[tool.name for tool in creation_tools]}")
-            
-            # Get current KB context for appropriate content generation
-            kb_name = self.kb_context.get('knowledge_base_name', 'Unknown')
-            kb_description = self.kb_context.get('knowledge_base_description', '')
-            
-            # FIXED: Use invoke with tools instead of bind_tools for more reliable tool calling
-            # Create a more explicit request that forces tool usage
-            user_request = f"""You are the ContentCreatorAgent. You MUST create actual articles in Knowledge Base {kb_id}.
+            user_request = f"""You are creating Level 1 category articles for Knowledge Base {kb_id}: {kb_name}
 
 KNOWLEDGE BASE CONTEXT:
 - Name: {kb_name}
@@ -1845,401 +1294,447 @@ KNOWLEDGE BASE CONTEXT:
 WORK ITEM: {title}
 DESCRIPTION: {description}
 
-CRITICAL REQUIREMENTS:
-1. You MUST use the KnowledgeBaseInsertArticle tool to create articles
-2. Create 3-4 comprehensive articles related to the KB topic: {kb_name}
-3. Each article should be 500-1000 words with proper markdown formatting
-4. Set parent_id=null for root-level articles
-5. Content MUST be relevant to: {kb_description}
+{existing_articles_info}
 
-ARTICLE STRUCTURE:
-- Use # for main title, ## for sections, ### for subsections
-- Include practical examples and actionable advice
-- Use bullet points and numbered lists for clarity
-- Write in a professional, authoritative tone
+{foundational_guidance}
 
-You MUST call the KnowledgeBaseInsertArticle tool for each article. Do not just describe what to create - ACTUALLY CREATE the articles using the tools.
+HIERARCHY LEVEL: Level 1 (Categories)
+Follow foundational guidance for Level 1 articles:
+- Simple categorical overviews with broad topic organization  
+- Short titles (2-4 words)
+- 300-500 words of broad topic introduction
+- Introductory tone, categorical organization, general concepts
 
-START CREATING ARTICLES NOW."""
+SPECIFIC INSTRUCTIONS:
+- Use the KnowledgeBaseInsertArticle tool for each article  
+- Set parent_id=null for all Level 1 categories
+- Apply appropriate tags using KnowledgeBaseInsertTag and KnowledgeBaseAddTagToArticle tools
+- Follow the Smart Category Expansion Logic from the foundational standards above
 
-            # Use the LLM with tools in a more direct way
-            messages = [
-                HumanMessage(content=user_request)
-            ]
+Start creating Level 1 category articles now using the available tools."""
+
+            # Try with primary model first
+            primary_model_name = getattr(self.llm, 'azure_deployment', 'primary_model')
+            primary_endpoint = getattr(self.llm, 'azure_endpoint', 'unknown_endpoint')
+            primary_api_version = getattr(self.llm, 'api_version', 'unknown_version')
             
-            # CRITICAL FIX: Azure OpenAI o1 model doesn't reliably use function calling
-            # Instead, we'll use the LLM to generate content and then force tool execution
-            print(f"🤖 Using LLM to generate article content (Azure OpenAI o1 behavior fix)")
+            self.log(f"🚀 Attempting primary model execution:")
+            self.log(f"   Model: {primary_model_name}")
+            self.log(f"   Endpoint: {primary_endpoint}")
+            self.log(f"   API Version: {primary_api_version}")
             
-            # Get LLM response for content generation
-            if creation_tools:
-                # Get current KB context for content generation
-                kb_name = self.kb_context.get('knowledge_base_name', 'Unknown')
-                kb_description = self.kb_context.get('knowledge_base_description', '')
+            try:
+                messages = [HumanMessage(content=user_request)]
+                response = self.llm_with_tools.invoke(messages)
                 
-                # Use o1 model for intelligent content generation without expecting function calls
-                content_request = f"""Generate detailed content for 3-4 comprehensive articles about: {kb_name}
-
-KNOWLEDGE BASE CONTEXT:
-- Name: {kb_name}
-- Description: {kb_description}
-
-WORK ITEM: {title}
-DESCRIPTION: {description}
-
-For EACH article, provide:
-1. A clear title relevant to {kb_name}
-2. Comprehensive content (500-1000 words) focused on the KB topic
-3. Proper markdown formatting with # ## ### headers
-4. Content must be relevant to: {kb_description}
-5. CRITICAL: List 3-5 relevant tags for the article (keywords, topics, categories)
-
-Generate articles that comprehensively cover the KB topic. Base the articles on the knowledge base description and ensure they provide practical, actionable information for the intended audience.
-
-Format each article as:
----ARTICLE START---
-TITLE: [Article Title]
-TAGS: [tag1, tag2, tag3, tag4, tag5]
-CONTENT: [Full markdown content]
----ARTICLE END---
-
-IMPORTANT: After generating content, you MUST:
-1. Create the article using KnowledgeBaseInsertArticle
-2. Create any new tags using KnowledgeBaseInsertTag
-3. Apply tags to the article using KnowledgeBaseAddTagToArticle
-4. Consider creating follow-up work items using GitLabCreateIssueTool if needed
-
-Generate all articles now."""
-
-                messages = [HumanMessage(content=content_request)]
-                response = self.llm.invoke(messages)
+                # Check if tools were called and execute them
+                tool_execution_result = self._execute_tool_calls(response, kb_id)
                 
-                print(f"📄 LLM response length: {len(str(response.content)) if hasattr(response, 'content') else len(str(response))} characters")
-                
-                # FORCE TOOL EXECUTION: Parse response and create articles using tools
-                articles_created = []
-                content_text = str(response.content) if hasattr(response, 'content') else str(response)
-                
-                # Parse articles from LLM response and execute tools
-                articles_created = self._parse_and_create_articles_manual(content_text, kb_id)
-                
-                if len(articles_created) > 0:
-                    print(f"✅ FORCED TOOL EXECUTION: Created {len(articles_created)} articles")
-                    self.log(f"Successfully created {len(articles_created)} articles via forced tool execution")
+                if tool_execution_result["success"]:
+                    self.log(f"✅ {primary_model_name} model successfully executed tools - created {tool_execution_result['articles_created']} articles")
                     return {
                         "success": True,
-                        "articles_created": articles_created,
-                        "method": "forced_tool_execution",
-                        "response_content": content_text[:500] + "..." if len(content_text) > 500 else content_text
+                        "response": response,
+                        "method": "primary_with_tools",
+                        "model_used": primary_model_name,
+                        "articles_created": tool_execution_result.get("articles_created_list", []),
+                        "execution_details": tool_execution_result
                     }
                 else:
-                    print(f"❌ FORCED TOOL EXECUTION FAILED: No articles created")
-                    self.log("LLM content generated but no articles created - using manual fallback")
-                    return self._execute_tools_manually(kb_id, title, description)
-            else:
-                print(f"⚠️ No creation tools available - using manual execution")
-                self.log("No creation tools available - executing manually")
-                return self._execute_tools_manually(kb_id, title, description)
+                    self.log(f"❌ {primary_model_name} model failed to execute tools properly - switching to backup model")
+                    return self._switch_to_backup_model(user_request, kb_id)
+                    
+            except Exception as e:
+                # Enhanced error logging for diagnosis
+                error_msg = str(e)
+                self.log(f"❌ {primary_model_name} model execution failed with detailed error:")
+                self.log(f"   Error Type: {type(e).__name__}")
+                self.log(f"   Error Message: {error_msg}")
+                
+                # Check for specific HTTP errors
+                if "404" in error_msg:
+                    self.log(f"🔍 HTTP 404 Error Detected:")
+                    self.log(f"   Model Deployment: {primary_model_name}")
+                    self.log(f"   Endpoint: {primary_endpoint}")
+                    self.log(f"   This suggests the model deployment '{primary_model_name}' does not exist in Azure OpenAI")
+                elif "401" in error_msg or "403" in error_msg:
+                    self.log(f"🔍 Authentication Error Detected: {error_msg}")
+                elif "429" in error_msg:
+                    self.log(f"🔍 Rate Limit Error Detected: {error_msg}")
+                elif "500" in error_msg or "502" in error_msg or "503" in error_msg:
+                    self.log(f"🔍 Server Error Detected: {error_msg}")
+                
+                self.log(f"🔄 Switching to backup model due to primary model failure")
+                return self._switch_to_backup_model(user_request, kb_id)
                 
         except Exception as e:
-            self.log(f"Error in article creation: {str(e)}")
-            import traceback
-            self.log(f"Traceback: {traceback.format_exc()}")
+            self.log(f"❌ Article creation failed completely: {str(e)}")
             return {
                 "success": False,
                 "error": f"Article creation failed: {str(e)}"
             }
 
-    def _execute_tools_manually(self, kb_id: int, title: str, description: str) -> Dict[str, Any]:
-        """Fallback method: Execute KnowledgeBase tools manually when LLM doesn't call them"""
+    def _execute_tool_calls(self, response, kb_id: int) -> Dict[str, Any]:
+        """Execute the tool calls from the LLM response and return results"""
         try:
-            self.log("Executing article creation tools manually as fallback")
+            articles_created_count = 0
+            articles_created_list = []
+            execution_results = []
             
-            # Import necessary modules
-            from operations.knowledge_base_operations import KnowledgeBaseOperations
-            from models.article import Article
+            # Check if response has tool calls
+            if not hasattr(response, 'tool_calls') or not response.tool_calls:
+                self.log("❌ No tool calls found in response")
+                return {"success": False, "articles_created": 0, "articles_created_list": [], "error": "No tool calls in response"}
             
-            kb_ops = KnowledgeBaseOperations()
-            articles_created = []
+            self.log(f"✅ Found {len(response.tool_calls)} tool calls to execute")
             
-            # Get current KB context for appropriate content generation
-            kb_name = self.kb_context.get('knowledge_base_name', 'Unknown Knowledge Base')
-            kb_description = self.kb_context.get('knowledge_base_description', '')
-
-            # Generate articles appropriate for the KB context
-            fallback_articles = self._generate_kb_appropriate_articles(kb_name, kb_description)
-            
-            # Find KnowledgeBaseInsertArticle tool
-            insert_tool = None
-            for tool in self.tools:
-                if tool.name == 'KnowledgeBaseInsertArticle':
-                    insert_tool = tool
-                    break
-            
-            if not insert_tool:
-                print(f"❌ KnowledgeBaseInsertArticle tool not available for fallback")
-                return {"success": False, "error": "Insert tool not available"}
-
-            # Create each fallback article
-            for article_data in fallback_articles:
-
+            # Execute each tool call
+            for i, tool_call in enumerate(response.tool_calls):
                 try:
-                    from models.article import Article
+                    tool_name = tool_call["name"]
+                    tool_args = tool_call["args"]
                     
-                    article_model = Article.InsertModel(
-                        title=article_data["title"],
-                        content=article_data["content"],
-                        knowledge_base_id=int(kb_id),
-                        author_id=1,
-                        parent_id=None
-                    )
+                    self.log(f"Executing tool call {i+1}: {tool_name}")
                     
-                    print(f"🔧 Creating fallback article: {article_data['title']}")
-                    result = insert_tool._run(
-                        knowledge_base_id=str(kb_id),
-                        article=article_model
-                    )
+                    # Find the tool by name
+                    tool_instance = None
+                    for tool in self.tools:
+                        if tool.name == tool_name:
+                            tool_instance = tool
+                            break
                     
-                    if result:
-                        # CRITICAL: Apply mandatory tags after article creation (FALLBACK METHOD)
-                        self.log(f"DEBUG FALLBACK: About to check for tagging - result: {result}, has_id: {hasattr(result, 'id') if result else 'result_is_none'}")
-                        if result and hasattr(result, 'id'):
-                            article_id = result.id
-                            self.log(f"DEBUG FALLBACK: Starting mandatory tagging for article_id: {article_id}, kb_id: {kb_id}")
-                            self._apply_mandatory_tags(article_id, kb_id, article_data["title"], article_data["content"])
-                            self.log(f"DEBUG FALLBACK: Finished mandatory tagging for article_id: {article_id}")
+                    if not tool_instance:
+                        self.log(f"❌ Tool {tool_name} not found in available tools")
+                        continue
+                    
+                    # Execute the tool
+                    tool_result = tool_instance.run(tool_args)
+                    
+                    # Check if this was a KnowledgeBaseInsertArticle call
+                    if tool_name == "KnowledgeBaseInsertArticle":
+                        if "successfully created" in str(tool_result).lower() or "article created" in str(tool_result).lower():
+                            articles_created_count += 1
+                            
+                            # Try to extract article info from the result
+                            article_info = {
+                                "title": tool_args.get("article", {}).get("title", "Unknown Title"),
+                                "id": None,  # Would need to extract from tool result
+                                "created": True
+                            }
+                            articles_created_list.append(article_info)
+                            self.log(f"✅ Article created successfully: {article_info['title']}")
                         else:
-                            self.log(f"DEBUG FALLBACK: TAGGING SKIPPED - result: {result}, has_id: {hasattr(result, 'id') if result else 'result_is_none'}")
-                        
-                        articles_created.append({
-                            "title": article_data["title"],
-                            "content_preview": article_data["content"][:100] + "...",
-                            "article_id": result.id if hasattr(result, 'id') else 'Unknown',
-                            "fallback_creation": True,
-                            "success": True
-                        })
-                        print(f"✅ Fallback article created: {article_data['title']}")
-                    else:
-                        print(f"❌ Failed to create fallback article: {article_data['title']}")
-                        
-                except Exception as e:
-                    print(f"❌ Error creating fallback article {article_data['title']}: {str(e)}")
-            
-        except Exception as e:
-            print(f"❌ Error in fallback article creation: {str(e)}")
-            import traceback
-            print(f"🔍 Traceback: {traceback.format_exc()}")
-        
-        return articles_created
-
-    def _parse_and_create_articles_manual(self, content: str, kb_id: int) -> List[Dict[str, Any]]:
-        """Fallback method: Parse LLM response and create articles manually"""
-        articles_created = []
-        
-        try:
-            import re
-            
-            # Parse articles using the expected format
-            article_pattern = r'---ARTICLE START---(.*?)---ARTICLE END---'
-            article_matches = re.findall(article_pattern, content, re.DOTALL)
-            
-            self.log(f"Found {len(article_matches)} articles to create manually")
-            
-            for i, article_content in enumerate(article_matches):
-                try:
-                    # Extract title and content
-                    title_match = re.search(r'TITLE:\s*(.+)', article_content)
-                    content_match = re.search(r'CONTENT:\s*(.*)', article_content, re.DOTALL)
+                            self.log(f"⚠️ KnowledgeBaseInsertArticle execution may have failed: {tool_result}")
                     
-                    if title_match and content_match:
-                        title = title_match.group(1).strip()
-                        article_text = content_match.group(1).strip()
-                        
-                        self.log(f"Creating article manually: {title}")
-                        
-                        # Use KnowledgeBaseInsertArticle tool
-                        insert_tool = None
-                        for tool in self.tools:
-                            if tool.name == 'KnowledgeBaseInsertArticle':
-                                insert_tool = tool
-                                break
-                        
-                        if insert_tool:
-                            # Create article object
-                            from models.article import Article
-                            article_obj = Article.InsertModel(
-                                title=title,
-                                content=article_text,
-                                knowledge_base_id=int(kb_id),
-                                author_id=1,
-                                parent_id=None
-                            )
-                            
-                            # Call the tool with correct _run method
-                            result = insert_tool._run(
-                                knowledge_base_id=str(kb_id),
-                                article=article_obj
-                            )
-                            
-                            # CRITICAL: Apply mandatory tags after article creation
-                            self.log(f"DEBUG MANUAL: About to check for tagging - result: {result}, has_id: {hasattr(result, 'id') if result else 'result_is_none'}")
-                            if result and hasattr(result, 'id'):
-                                article_id = result.id
-                                self.log(f"DEBUG MANUAL: Starting mandatory tagging for article_id: {article_id}, kb_id: {kb_id}")
-                                self._apply_mandatory_tags(article_id, kb_id, title, article_text)
-                                self.log(f"DEBUG MANUAL: Finished mandatory tagging for article_id: {article_id}")
-                            else:
-                                self.log(f"DEBUG MANUAL: TAGGING SKIPPED - result: {result}, has_id: {hasattr(result, 'id') if result else 'result_is_none'}")
-                            
-                            articles_created.append({
-                                "title": title,
-                                "content_preview": article_text[:100] + "...",
-                                "result": str(result),
-                                "manual_creation": True
-                            })
-                            
-                            self.log(f"✅ Article created manually: {title}")
-                        else:
-                            self.log("❌ KnowledgeBaseInsertArticle tool not found")
-                    else:
-                        self.log(f"❌ Could not parse article {i+1} - missing title or content")
-                        
-                except Exception as e:
-                    self.log(f"❌ Error creating article {i+1}: {str(e)}")
+                    execution_results.append({
+                        "tool_name": tool_name,
+                        "tool_args": tool_args,
+                        "result": tool_result,
+                        "success": True
+                    })
+                    
+                except Exception as tool_error:
+                    self.log(f"❌ Tool execution failed for {tool_call.get('name', 'unknown')}: {str(tool_error)}")
+                    execution_results.append({
+                        "tool_name": tool_call.get("name", "unknown"),
+                        "tool_args": tool_call.get("args", {}),
+                        "result": str(tool_error),
+                        "success": False
+                    })
             
-        except Exception as e:
-            self.log(f"❌ Error parsing articles manually: {str(e)}")
-        
-        return articles_created
-
-    def _apply_mandatory_tags(self, article_id: int, kb_id: int, title: str, content: str):
-        """Apply mandatory tags to newly created articles following foundational requirements"""
-        try:
-            self.log(f"🏷️ MANDATORY TAGGING STARTED for article {article_id}: {title}")
-            self.log(f"🏷️ Parameters - article_id: {article_id} (type: {type(article_id)}), kb_id: {kb_id} (type: {type(kb_id)})")
+            # Final verification by checking database
+            if articles_created_count > 0:
+                # Double-check with database verification
+                db_verified = self._verify_articles_in_database(kb_id)
+                if db_verified:
+                    self.log(f"✅ Database verification confirmed: {articles_created_count} articles created")
+                else:
+                    self.log(f"⚠️ Database verification failed despite tool execution success")
             
-            # FOUNDATIONAL REQUIREMENT: Every article needs skill-level + content-type + domain-specific tags
-            
-            # 1. Determine skill level tag
-            skill_level_tag = "beginner"  # Default
-            if any(word in content.lower() for word in ["advanced", "expert", "complex", "sophisticated"]):
-                skill_level_tag = "advanced"
-            elif any(word in content.lower() for word in ["intermediate", "moderate", "basic understanding"]):
-                skill_level_tag = "intermediate"
-            
-            # 2. Determine content type tag  
-            content_type_tag = "guide"  # Default
-            if any(word in title.lower() for word in ["overview", "introduction", "what is", "basics"]):
-                content_type_tag = "overview"
-            elif any(word in content.lower() for word in ["tutorial", "step-by-step", "how to", "walkthrough"]):
-                content_type_tag = "tutorial"
-            elif any(word in content.lower() for word in ["reference", "quick", "lookup", "glossary"]):
-                content_type_tag = "reference"
-            elif any(word in content.lower() for word in ["best practice", "recommendation", "should", "avoid"]):
-                content_type_tag = "best-practices"
-            
-            # 3. Determine domain-specific tags based on KB context (financial planning)
-            domain_tags = []
-            financial_keywords = {
-                "budget": "budgeting",
-                "saving": "savings-strategies", 
-                "investment": "investment-planning",
-                "inflation": "inflation-protection",
-                "family": "family-finance",
-                "cost": "cost-management",
-                "expense": "expense-tracking",
-                "financial": "financial-planning"
+            return {
+                "success": articles_created_count > 0,
+                "articles_created": articles_created_count,
+                "articles_created_list": articles_created_list,
+                "total_tool_calls": len(response.tool_calls),
+                "execution_results": execution_results
             }
             
-            for keyword, tag in financial_keywords.items():
-                if keyword in title.lower() or keyword in content.lower():
-                    domain_tags.append(tag)
+        except Exception as e:
+            self.log(f"❌ Tool execution failed: {str(e)}")
+            return {"success": False, "articles_created": 0, "articles_created_list": [], "error": str(e)}
+
+    def _get_existing_articles_for_duplicate_prevention(self, kb_id: int) -> str:
+        """Get existing articles info to prevent duplicates in LLM prompt"""
+        try:
+            # Get root level articles to check for existing Level 1 categories
+            kb_tool = next((t for t in self.tools if 'KnowledgeBaseGetRootLevelArticles' in t.name), None)
+            if not kb_tool:
+                return "EXISTING ARTICLES: Could not retrieve existing articles for duplicate checking."
             
-            # Ensure we have at least one domain tag
-            if not domain_tags:
-                domain_tags = ["financial-planning"]  # Default domain tag
+            articles_result = kb_tool._run(knowledge_base_id=str(kb_id))
+            existing_titles = []
             
-            # 4. Create and apply tags
-            tags_to_apply = [skill_level_tag, content_type_tag] + domain_tags[:2]  # Limit to avoid over-tagging
+            # Handle different result formats
+            if isinstance(articles_result, list):
+                for article in articles_result:
+                    if isinstance(article, dict) and 'title' in article:
+                        existing_titles.append(article['title'])
+                    elif hasattr(article, 'title'):
+                        existing_titles.append(article.title)
+                    elif isinstance(article, tuple) and len(article) >= 3:
+                        existing_titles.append(article[2])
+            elif isinstance(articles_result, str):
+                # Parse string format for titles
+                import re
+                title_pattern = r"\(\d+,\s*\d+,\s*'([^']+)'"
+                titles_found = re.findall(title_pattern, articles_result)
+                existing_titles = [title for title in titles_found if title and title.strip()]
+            elif hasattr(articles_result, '__iter__'):
+                for article in articles_result:
+                    if isinstance(article, tuple) and len(article) >= 3:
+                        existing_titles.append(article[2])
+                    elif hasattr(article, 'title'):
+                        existing_titles.append(article.title)
             
-            for tag_name in tags_to_apply:
-                self._ensure_tag_exists_and_apply(kb_id, article_id, tag_name)
+            if existing_titles:
+                titles_list = "', '".join(existing_titles)
+                return f"""EXISTING ARTICLES: The knowledge base already has {len(existing_titles)} Level 1 categories:
+- Existing titles: ['{titles_list}']
+- DO NOT create articles with these titles or similar ones
+- Only create NEW categories that don't overlap with existing ones"""
+            else:
+                return "EXISTING ARTICLES: No existing Level 1 categories found. You can create the initial category structure."
                 
-            self.log(f"✅ Applied {len(tags_to_apply)} mandatory tags to article {article_id}: {tags_to_apply}")
+        except Exception as e:
+            self.log(f"Warning: Could not check existing articles: {e}")
+            return "EXISTING ARTICLES: Could not retrieve existing articles for duplicate checking."
+
+    def _verify_articles_in_database(self, kb_id: int) -> bool:
+        """Verify that articles were actually created in the database"""
+        try:
+            import psycopg2
+            from config.model_config import DATABASE_URL
+            
+            with psycopg2.connect(DATABASE_URL) as conn:
+                with conn.cursor() as cur:
+                    # Count articles created in the last 2 minutes for this KB
+                    cur.execute("""
+                        SELECT COUNT(*) FROM articles 
+                        WHERE knowledge_base_id = %s 
+                        AND created_at > NOW() - INTERVAL '2 minutes'
+                    """, (kb_id,))
+                    recent_count = cur.fetchone()[0]
+                    
+                    if recent_count > 0:
+                        self.log(f"✅ Database verification: {recent_count} recent articles found in KB {kb_id}")
+                        return True
+                    else:
+                        self.log(f"❌ Database verification: No recent articles found in KB {kb_id}")
+                        return False
+                        
+        except Exception as db_error:
+            self.log(f"❌ Database verification failed: {db_error}")
+            return False
+
+    def _verify_tool_usage(self, response) -> bool:
+        """Verify that the LLM actually used tools in its response"""
+        try:
+            # Check if response has tool calls or if articles were actually created
+            if hasattr(response, 'tool_calls') and response.tool_calls:
+                self.log(f"✅ Found {len(response.tool_calls)} tool calls in response")
+                return True
+            
+            # Alternative: Check if articles were actually created in KB by counting
+            # This is a more reliable verification than just assuming success
+            if hasattr(self, 'kb_context') and self.kb_context.get('knowledge_base_id'):
+                kb_id = self.kb_context['knowledge_base_id']
+                
+                # Quick database check to see if any articles were actually created
+                try:
+                    import psycopg2
+                    from config.model_config import DATABASE_URL
+                    
+                    with psycopg2.connect(DATABASE_URL) as conn:
+                        with conn.cursor() as cur:
+                            # Count articles created in the last minute for this KB
+                            cur.execute("""
+                                SELECT COUNT(*) FROM articles 
+                                WHERE knowledge_base_id = %s 
+                                AND created_at > NOW() - INTERVAL '1 minute'
+                            """, (kb_id,))
+                            recent_count = cur.fetchone()[0]
+                            
+                            if recent_count > 0:
+                                self.log(f"✅ Verified: {recent_count} articles created in KB {kb_id}")
+                                return True
+                            else:
+                                self.log(f"❌ No articles created in KB {kb_id} in the last minute")
+                                return False
+                                
+                except Exception as db_error:
+                    self.log(f"❌ Database verification failed: {db_error}")
+                    return False
+            
+            self.log("❌ No tool calls found and cannot verify article creation")
+            return False
             
         except Exception as e:
-            self.log(f"❌ Error applying mandatory tags to article {article_id}: {str(e)}")
-    
-    def _ensure_tag_exists_and_apply(self, kb_id: int, article_id: int, tag_name: str) -> bool:
-        """Ensure tag exists in KB and apply it to article. Returns True if successful."""
+            self.log(f"Error verifying tool usage: {e}")
+            return False
+
+    def _switch_to_backup_model(self, user_request: str, kb_id: int) -> Dict[str, Any]:
+        """Switch to backup model when primary model fails to use tools"""
         try:
-            self.log(f"🏷️ DEBUG MANUAL: Starting _ensure_tag_exists_and_apply for tag '{tag_name}', article {article_id}, KB {kb_id}")
+            # Get primary model name for logging
+            primary_model_name = getattr(self.llm, 'azure_deployment', 'primary_model')
             
-            # First check if tag already exists
-            get_tags_tool = next((t for t in self.tools if t.name == 'KnowledgeBaseGetTagsByKnowledgeBase'), None)
-            if not get_tags_tool:
-                self.log(f"❌ KnowledgeBaseGetTagsByKnowledgeBase tool not found")
-                return False
+            # Import necessary components for backup model
+            import os
+            from openai import AzureOpenAI
+            from langchain_openai import AzureChatOpenAI
+            from langchain.agents import create_openai_tools_agent, AgentExecutor
+            from langchain.prompts import ChatPromptTemplate
+            
+            # Create backup model client using env variable
+            backup_model_name = os.getenv('OPENAI_API_BACKUP_MODEL_DEPLOYMENT_NAME', 'gpt-4o')
+            backup_endpoint = os.getenv('OPENAI_API_ENDPOINT', 'unknown_endpoint')
+            backup_api_version = os.getenv('OPENAI_API_VERSION', 'unknown_version')
+            
+            self.log(f"🔄 Switching from {primary_model_name} to backup model:")
+            self.log(f"   Backup Model: {backup_model_name}")
+            self.log(f"   Backup Endpoint: {backup_endpoint}")
+            self.log(f"   Backup API Version: {backup_api_version}")
+            
+            backup_llm = AzureChatOpenAI(
+                azure_deployment=backup_model_name,
+                api_version=os.getenv('OPENAI_API_VERSION'),
+                azure_endpoint=os.getenv('OPENAI_API_ENDPOINT'),
+                api_key=os.getenv('OPENAI_API_KEY'),
+                temperature=0.1,
+                model_kwargs={"max_tokens": 4000}
+            )
+            
+            # Create agent with tools for backup model
+            tools = self.llm.bind_tools([
+                tool for tool in self.tools 
+                if hasattr(tool, 'name') and 'KnowledgeBase' in tool.name
+            ])
+            
+            # Create a proper prompt for the backup model with agent_scratchpad
+            backup_prompt = ChatPromptTemplate.from_messages([
+                ("system", "You are a content creation assistant. Use the KnowledgeBaseInsertArticle tool to create articles. ALWAYS use tools to create content."),
+                ("human", "{input}"),
+                ("placeholder", "{agent_scratchpad}")
+            ])
+            
+            # Create agent executor with backup model
+            agent = create_openai_tools_agent(backup_llm, self.tools, backup_prompt)
+            agent_executor = AgentExecutor(agent=agent, tools=self.tools, verbose=True)
+            
+            # Execute with backup model
+            self.log(f"🔧 Executing content creation with backup model...")
+            try:
+                result = agent_executor.invoke({"input": user_request})
+                self.log(f"✅ Backup model execution completed successfully")
+            except Exception as backup_error:
+                # Enhanced backup model error logging
+                backup_error_msg = str(backup_error)
+                self.log(f"❌ Backup model execution failed with detailed error:")
+                self.log(f"   Backup Model: {backup_model_name}")
+                self.log(f"   Error Type: {type(backup_error).__name__}")
+                self.log(f"   Error Message: {backup_error_msg}")
                 
-            self.log(f"🏷️ DEBUG MANUAL: Getting existing tags from KB {kb_id}")
-            existing_tags = get_tags_tool._run(knowledge_base_id=str(kb_id))
-            tag_id = None
+                # Check for specific HTTP errors in backup model
+                if "404" in backup_error_msg:
+                    self.log(f"🔍 HTTP 404 Error in Backup Model:")
+                    self.log(f"   Backup Model Deployment: {backup_model_name}")
+                    self.log(f"   Backup Endpoint: {backup_endpoint}")
+                    self.log(f"   This suggests the backup model deployment '{backup_model_name}' does not exist in Azure OpenAI")
+                elif "401" in backup_error_msg or "403" in backup_error_msg:
+                    self.log(f"🔍 Authentication Error in Backup Model: {backup_error_msg}")
+                elif "429" in backup_error_msg:
+                    self.log(f"🔍 Rate Limit Error in Backup Model: {backup_error_msg}")
+                elif "500" in backup_error_msg or "502" in backup_error_msg or "503" in backup_error_msg:
+                    self.log(f"🔍 Server Error in Backup Model: {backup_error_msg}")
+                
+                # Return error immediately if backup model fails
+                return {
+                    "success": False,
+                    "error": f"Backup model {backup_model_name} failed: {backup_error_msg}",
+                    "model_used": backup_model_name,
+                    "error_type": type(backup_error).__name__
+                }
             
-            self.log(f"🏷️ DEBUG MANUAL: Received tags: {type(existing_tags)}, count: {len(existing_tags) if existing_tags else 0}")
-            
-            # Look for existing tag - FIXED: existing_tags is a list, not an object with .tags attribute
-            if existing_tags and isinstance(existing_tags, list):
-                for tag in existing_tags:
-                    if hasattr(tag, 'name') and tag.name.lower() == tag_name.lower():
-                        tag_id = tag.id
-                        self.log(f"🏷️ DEBUG MANUAL: Found existing tag: {tag_name} (ID: {tag_id})")
-                        break
-            
-            self.log(f"🏷️ DEBUG MANUAL: After search, tag_id = {tag_id}")
-            
-            # Create tag if it doesn't exist (this should NOT happen for existing tags)
-            if tag_id is None:
-                self.log(f"🏷️ DEBUG MANUAL: Tag '{tag_name}' not found, attempting to create it")
-                insert_tag_tool = next((t for t in self.tools if t.name == 'KnowledgeBaseInsertTag'), None)
-                if insert_tag_tool:
-                    from models.tags import Tags
-                    tag_obj = Tags.InsertModel(
-                        id=0,  # Will be auto-generated
-                        name=tag_name,
-                        knowledge_base_id=int(kb_id)
-                    )
-                    tag_result = insert_tag_tool._run(tag=tag_obj)
-                    if hasattr(tag_result, 'tag_id'):
-                        tag_id = tag_result.tag_id
-                        self.log(f"✅ Created new tag: {tag_name} (ID: {tag_id})")
-                    else:
-                        self.log(f"❌ Failed to create tag: {tag_name}")
-                        return False
-                else:
-                    self.log(f"❌ KnowledgeBaseInsertTag tool not found")
-                    return False
-            
-            # Apply tag to article
-            if tag_id:
-                self.log(f"🏷️ DEBUG MANUAL: Applying tag ID {tag_id} to article {article_id}")
-                add_tag_tool = next((t for t in self.tools if t.name == 'KnowledgeBaseAddTagToArticle'), None)
-                if add_tag_tool:
-                    result = add_tag_tool._run(article_id=str(article_id), tag_id=str(tag_id))
-                    self.log(f"🏷️ DEBUG MANUAL: AddTagToArticle result: {result}")
-                    self.log(f"✅ Applied tag '{tag_name}' (ID: {tag_id}) to article {article_id}")
-                    return True
-                else:
-                    self.log(f"❌ KnowledgeBaseAddTagToArticle tool not found")
-                    return False
+            # Verify backup model created articles
+            if self._verify_tool_usage_for_backup(kb_id):
+                self.log("✅ Backup model successfully created articles")
+                return {
+                    "success": True,
+                    "model_used": backup_model_name,
+                    "message": f"Content creation completed with backup model {backup_model_name}",
+                    "result": result
+                }
             else:
-                self.log(f"❌ No tag ID available for '{tag_name}'")
-                return False
+                primary_model_name = getattr(self.llm, 'azure_deployment', 'primary_model')
+                self.log("❌ Backup model also failed to create articles")
+                return {
+                    "success": False,
+                    "error": f"Both {primary_model_name} and {backup_model_name} failed to create articles",
+                    "model_used": backup_model_name
+                }
+            
+        except Exception as e:
+            # Enhanced overall backup model error logging
+            error_msg = str(e)
+            self.log(f"❌ Backup model execution failed with system error:")
+            self.log(f"   Error Type: {type(e).__name__}")
+            self.log(f"   Error Message: {error_msg}")
+            self.log(f"   Backup Model: {backup_model_name}")
+            
+            # Check for specific errors in system-level backup failures
+            if "404" in error_msg:
+                self.log(f"🔍 System-level 404 Error in Backup Model Setup:")
+                self.log(f"   This could indicate deployment '{backup_model_name}' doesn't exist")
+            elif "import" in error_msg.lower():
+                self.log(f"🔍 Import Error in Backup Model Setup: {error_msg}")
+            elif "connection" in error_msg.lower():
+                self.log(f"🔍 Connection Error in Backup Model Setup: {error_msg}")
+            
+            return {
+                "success": False,
+                "error": f"Backup model system failure: {str(e)}",
+                "error_type": type(e).__name__,
+                "backup_model": backup_model_name
+            }
+
+    def _verify_tool_usage_for_backup(self, kb_id: int) -> bool:
+        """Verify that the backup model actually created articles"""
+        try:
+            import psycopg2
+            from config.model_config import DATABASE_URL
+            
+            with psycopg2.connect(DATABASE_URL) as conn:
+                with conn.cursor() as cur:
+                    # Count articles created in the last 2 minutes for this KB
+                    cur.execute("""
+                        SELECT COUNT(*) FROM articles 
+                        WHERE knowledge_base_id = %s 
+                        AND created_at > NOW() - INTERVAL '2 minutes'
+                    """, (kb_id,))
+                    recent_count = cur.fetchone()[0]
+                    
+                    if recent_count > 0:
+                        self.log(f"✅ Backup model verification: {recent_count} articles created in KB {kb_id}")
+                        return True
+                    else:
+                        self.log(f"❌ Backup model verification: No articles created in KB {kb_id}")
+                        return False
                         
         except Exception as e:
-            self.log(f"❌ Error ensuring tag '{tag_name}' exists and applying to article {article_id}: {str(e)}")
-            import traceback
-            self.log(f"🏷️ DEBUG MANUAL: Full traceback: {traceback.format_exc()}")
+            self.log(f"❌ Backup model verification failed: {e}")
             return False
+
+    # Technical debt fallback methods removed - trusting the LLM to use tools properly
 
     def _get_project_id_from_kb(self, kb_id: int) -> Optional[int]:
         """Get GitLab project ID associated with this KB"""
@@ -2319,153 +1814,308 @@ Generate all articles now."""
         try:
             # Find the GitLab comment tool
             for tool in self.tools:
-                if hasattr(tool, 'name') and 'comment' in tool.name.lower():
-                    # Would need to implement GitLab comment tool
-                    self.log(f"Progress update: {comment[:100]}...")
-                    break
-            else:
-                self.log(f"Progress update (no GitLab tool): {comment[:100]}...")
+                if hasattr(tool, 'name') and tool.name == 'GitLabAddCommentTool':
+                    # Pass the agent class name as the agent identifier
+                    agent_name = self.__class__.__name__
+                    result = tool._run(str(project_id), str(issue_id), comment, agent_name)
+                    self.log(f"GitLab comment result: {result}")
+                    return True
+            
+            # Fallback - log locally if tool not found
+            self.log(f"Progress update (GitLabAddCommentTool not found): {comment[:100]}...")
+            return False
+            
         except Exception as e:
             self.log(f"Error adding progress update: {e}")
+            return False
 
     def _mark_issue_complete(self, project_id: int, issue_id: int, message: str):
         """Mark GitLab issue as complete"""
         try:
-            self.log(f"Marking issue #{issue_id} as complete: {message}")
-            # Would need to implement issue completion
+            # First add a completion comment
+            self._add_work_progress_update(project_id, issue_id, f"✅ COMPLETED: {message}")
+            
+            # Then close the issue
+            for tool in self.tools:
+                if hasattr(tool, 'name') and tool.name == 'GitLabCloseIssueTool':
+                    # Pass the agent class name as the agent identifier
+                    agent_name = self.__class__.__name__
+                    result = tool._run(str(project_id), str(issue_id), f"Issue completed: {message}", agent_name)
+                    self.log(f"GitLab close issue result: {result}")
+                    return True
+            
+            self.log(f"Marking issue #{issue_id} as complete: {message} (GitLabCloseIssueTool not found)")
+            return False
+            
         except Exception as e:
             self.log(f"Error marking issue complete: {e}")
+            return False
 
-    def _generate_kb_appropriate_articles(self, kb_name: str, kb_description: str) -> List[Dict[str, str]]:
-        """Generate articles appropriate for the specific KB context"""
+    def _determine_hierarchical_parent_id(self, kb_id: int, title: str, content: str) -> Optional[int]:
+        """
+        Determine the appropriate parent_id for hierarchical article placement.
         
-        # Determine article topics based on KB name and description
-        if "inflation" in kb_name.lower() or "family finance" in kb_name.lower():
-            return [
-                {
-                    "title": f"Introduction to {kb_name}",
-                    "content": f"""# Introduction to {kb_name}
+        Implements the hierarchical structure:
+        - Level 1 (Root Categories): parent_id=None - broad topic containers
+        - Level 2 (Subcategories): parent_id=category_id - focused topic areas  
+        - Level 3+ (Content Articles): parent_id=subcategory_id - detailed content
+        
+        Args:
+            kb_id: Knowledge base ID
+            title: Article title for context analysis
+            content: Article content for context analysis
+            
+        Returns:
+            Optional[int]: parent_id (None for root categories, article_id for children)
+        """
+        try:
+            self.log(f"🏗️ HIERARCHY: Determining parent_id for '{title}' in KB {kb_id}")
+            
+            # Get current hierarchy using the tool
+            hierarchy_tool = None
+            for tool in self.tools:
+                if tool.name == 'KnowledgeBaseGetArticleHierarchy':
+                    hierarchy_tool = tool
+                    break
+            
+            if not hierarchy_tool:
+                self.log("⚠️ HIERARCHY: KnowledgeBaseGetArticleHierarchy tool not found, defaulting to root level")
+                return None
+            
+            # Get existing hierarchy
+            hierarchy_result = hierarchy_tool._run(knowledge_base_id=str(kb_id))
+            
+            if not hierarchy_result or "No articles found" in str(hierarchy_result):
+                self.log("🏗️ HIERARCHY: No existing articles - creating first root category")
+                return None
+            
+            # Parse hierarchy to understand current structure
+            articles = self._parse_hierarchy_result(hierarchy_result)
+            
+            # Analyze what type of article this should be based on content and existing structure
+            article_type = self._classify_article_type(title, content, articles)
+            
+            if article_type == "root_category":
+                self.log(f"🏗️ HIERARCHY: Article '{title}' classified as ROOT CATEGORY (parent_id=None)")
+                return None
+            elif article_type == "subcategory":
+                # Find best matching root category as parent
+                parent_id = self._find_best_category_parent(title, content, articles)
+                self.log(f"🏗️ HIERARCHY: Article '{title}' classified as SUBCATEGORY (parent_id={parent_id})")
+                return parent_id
+            else:  # content_article
+                # Find best matching subcategory as parent
+                parent_id = self._find_best_subcategory_parent(title, content, articles)
+                self.log(f"🏗️ HIERARCHY: Article '{title}' classified as CONTENT ARTICLE (parent_id={parent_id})")
+                return parent_id
+                
+        except Exception as e:
+            self.log(f"❌ HIERARCHY: Error determining parent_id: {str(e)} - defaulting to None")
+            import traceback
+            self.log(f"HIERARCHY ERROR: {traceback.format_exc()}")
+            return None
 
-## Overview
-{kb_description}
+    def _parse_hierarchy_result(self, hierarchy_result) -> List[Dict]:
+        """Parse the hierarchy tool result into a structured format"""
+        articles = []
+        try:
+            # Handle different result formats
+            if isinstance(hierarchy_result, str):
+                # Parse text format that typically includes article info
+                lines = hierarchy_result.split('\n')
+                for line in lines:
+                    if 'ID:' in line and 'Title:' in line:
+                        # Extract article info from formatted strings
+                        parts = line.split('|')
+                        if len(parts) >= 3:
+                            id_part = parts[0].strip()
+                            title_part = parts[1].strip() 
+                            parent_part = parts[2].strip() if len(parts) > 2 else "None"
+                            
+                            article_id = None
+                            if 'ID:' in id_part:
+                                id_match = re.search(r'ID:\s*(\d+)', id_part)
+                                if id_match:
+                                    article_id = int(id_match.group(1))
+                                    
+                            parent_id = None
+                            if 'Parent:' in parent_part and 'None' not in parent_part:
+                                parent_match = re.search(r'Parent:\s*(\d+)', parent_part)
+                                if parent_match:
+                                    parent_id = int(parent_match.group(1))
+                                    
+                            if article_id:
+                                articles.append({
+                                    'id': article_id,
+                                    'title': title_part.replace('Title:', '').strip(),
+                                    'parent_id': parent_id
+                                })
+                                
+            self.log(f"🏗️ HIERARCHY: Parsed {len(articles)} articles from hierarchy")
+            return articles
+            
+        except Exception as e:
+            self.log(f"❌ HIERARCHY: Error parsing hierarchy result: {str(e)}")
+            return []
 
-## Key Principles
-Understanding the fundamentals of managing family finances during inflationary periods requires strategic planning and practical implementation.
-
-### Financial Protection Strategies
-- **Budget Optimization**: Adapting spending patterns to economic changes
-- **Emergency Planning**: Building resilient financial cushions
-- **Cost Management**: Identifying and reducing unnecessary expenses
-- **Income Protection**: Strategies for maintaining household income
-
-### Implementation Framework
-- **Assessment**: Evaluate current financial position
-- **Planning**: Develop inflation-resistant strategies
-- **Execution**: Implement protective measures
-- **Monitoring**: Track effectiveness and adjust as needed
-
-## Getting Started
-A systematic approach to protecting your family's financial well-being during challenging economic times."""
-                },
-                {
-                    "title": "Budgeting Techniques for Inflation",
-                    "content": f"""# Budgeting Techniques for Inflation
-
-## Strategic Budget Planning
-
-### Inflation-Resistant Budgeting
-Creating budgets that adapt to changing economic conditions:
-
-#### Essential Categories
-- **Fixed Expenses**: Housing, insurance, and loan payments
-- **Variable Necessities**: Food, utilities, and transportation
-- **Discretionary Spending**: Entertainment and non-essential purchases
-- **Savings Goals**: Emergency funds and long-term planning
-
-### Adaptive Strategies
-- **Percentage-Based Allocation**: Flexible spending categories
-- **Priority Ranking**: Focus on essential expenses first
-- **Substitution Planning**: Alternative options for expensive items
-- **Seasonal Adjustments**: Accounting for seasonal cost variations
-
-## Implementation Tools
-Practical methods for maintaining financial stability during inflationary periods."""
-                },
-                {
-                    "title": "Cost-Cutting Strategies for Families",
-                    "content": f"""# Cost-Cutting Strategies for Families
-
-## Comprehensive Expense Reduction
-
-### Systematic Approach to Savings
-Identifying and implementing meaningful cost reductions:
-
-#### Immediate Actions
-- **Subscription Audit**: Review and cancel unnecessary services
-- **Energy Efficiency**: Reduce utility costs through conservation
-- **Transportation Optimization**: Minimize fuel and maintenance costs
-- **Food Budget Management**: Strategic grocery shopping and meal planning
-
-#### Long-term Strategies
-- **Bulk Purchasing**: Buying in quantity for better unit prices
-- **DIY Solutions**: Learning skills to reduce service costs
-- **Community Resources**: Utilizing local programs and sharing opportunities
-- **Technology Integration**: Using apps and tools for savings
-
-## Sustainable Practices
-Building long-term habits that support continued financial health and family well-being."""
-                }
+    def _classify_article_type(self, title: str, content: str, existing_articles: List[Dict]) -> str:
+        """
+        Classify what type of article this should be in the hierarchy.
+        
+        Returns: "root_category", "subcategory", or "content_article"
+        """
+        try:
+            # Count existing structure levels
+            root_categories = [a for a in existing_articles if a.get('parent_id') is None]
+            subcategories = [a for a in existing_articles if a.get('parent_id') is not None and 
+                           any(root.get('id') == a.get('parent_id') for root in root_categories)]
+            
+            self.log(f"🏗️ HIERARCHY: Current structure - {len(root_categories)} root categories, {len(subcategories)} subcategories")
+            
+            # Rule 1: If we have < 3 root categories, prefer creating root categories for broad topics
+            if len(root_categories) < 3:
+                # Check if this looks like a broad, categorical topic
+                broad_indicators = [
+                    len(title.split()) <= 4,  # Short, categorical titles
+                    any(word in title.lower() for word in [
+                        'budgeting', 'saving', 'investing', 'planning', 'strategies', 
+                        'basics', 'fundamentals', 'introduction', 'overview', 'guide'
+                    ]),
+                    len(content) < 800  # Shorter content suggests overview/category
+                ]
+                
+                if sum(broad_indicators) >= 2:
+                    return "root_category"
+            
+            # Rule 2: If we have good root structure (3-8 categories), prefer subcategories
+            if 3 <= len(root_categories) <= 8:
+                # Check if this looks like a focused subtopic
+                focused_indicators = [
+                    len(title.split()) > 4,  # More specific titles
+                    any(word in title.lower() for word in [
+                        'techniques', 'methods', 'tips', 'advanced', 'specific', 
+                        'how to', 'step by', 'detailed', 'comprehensive'
+                    ]),
+                    500 <= len(content) <= 1200  # Medium content suggests subcategory
+                ]
+                
+                if sum(focused_indicators) >= 2:
+                    return "subcategory"
+            
+            # Rule 3: Default to content article for detailed, specific content
+            content_indicators = [
+                len(content) > 800,  # Longer content suggests detailed article
+                any(word in title.lower() for word in [
+                    'tutorial', 'walkthrough', 'example', 'case study', 'implementation',
+                    'practical', 'actionable', 'tools', 'resources', 'checklist'
+                ])
             ]
-        else:
-            # Generic fallback for other KB types
-            return [
-                {
-                    "title": f"Introduction to {kb_name}",
-                    "content": f"""# Introduction to {kb_name}
+            
+            if sum(content_indicators) >= 1:
+                return "content_article"
+            
+            # Fallback logic based on structure balance
+            if len(root_categories) < 3:
+                return "root_category"
+            elif len(subcategories) < len(root_categories) * 2:
+                return "subcategory" 
+            else:
+                return "content_article"
+                
+        except Exception as e:
+            self.log(f"❌ HIERARCHY: Error classifying article type: {str(e)}")
+            return "content_article"  # Safe default
 
-## Overview
-{kb_description}
-
-## Key Concepts
-This knowledge base provides comprehensive information and practical guidance on the topic.
-
-### Fundamental Principles
-- **Understanding**: Core concepts and terminology
-- **Application**: Practical implementation strategies
-- **Best Practices**: Proven approaches and methodologies
-- **Problem Solving**: Common challenges and solutions
-
-### Learning Path
-- **Foundation**: Essential knowledge and skills
-- **Intermediate**: Advanced concepts and techniques
-- **Expert**: Specialized knowledge and innovation
-- **Mastery**: Teaching and leading others
-
-## Getting Started
-Begin your journey with solid foundational knowledge."""
-                },
-                {
-                    "title": f"Fundamentals of {kb_name}",
-                    "content": f"""# Fundamentals of {kb_name}
-
-## Core Knowledge Areas
-
-### Essential Understanding
-Building comprehensive knowledge in the subject area:
-
-#### Key Components
-- **Terminology**: Important terms and definitions
-- **Processes**: Step-by-step procedures and workflows
-- **Tools**: Resources and technologies available
-- **Standards**: Best practices and quality criteria
-
-### Implementation Framework
-- **Planning**: Strategic approach to implementation
-- **Execution**: Practical steps and actions
-- **Monitoring**: Tracking progress and results
-- **Optimization**: Continuous improvement strategies
-
-## Practical Application
-Moving from theory to real-world implementation."""
+    def _find_best_category_parent(self, title: str, content: str, existing_articles: List[Dict]) -> Optional[int]:
+        """Find the best root category to use as parent for a subcategory"""
+        try:
+            root_categories = [a for a in existing_articles if a.get('parent_id') is None]
+            
+            if not root_categories:
+                self.log("🏗️ HIERARCHY: No root categories found for subcategory parent")
+                return None
+            
+            # Simple keyword matching to find most relevant parent
+            best_match = None
+            best_score = 0
+            
+            for category in root_categories:
+                score = 0
+                category_title = category.get('title', '').lower()
+                search_text = (title + ' ' + content).lower()
+                
+                # Score based on keyword overlap
+                category_words = set(category_title.split())
+                content_words = set(search_text.split())
+                overlap = len(category_words.intersection(content_words))
+                
+                score += overlap * 2
+                
+                # Boost score for thematic matching
+                financial_themes = {
+                    'budget': ['budget', 'expense', 'income', 'money', 'cost', 'financial'],
+                    'saving': ['save', 'saving', 'frugal', 'cut', 'reduce', 'tips'],
+                    'invest': ['invest', 'portfolio', 'stock', 'return', 'growth', 'wealth'],
+                    'plan': ['plan', 'strategy', 'goal', 'future', 'retirement', 'long-term']
                 }
-            ]
+                
+                for theme, keywords in financial_themes.items():
+                    if theme in category_title:
+                        theme_matches = sum(1 for keyword in keywords if keyword in search_text)
+                        score += theme_matches
+                
+                if score > best_score:
+                    best_score = score
+                    best_match = category.get('id')
+            
+            self.log(f"🏗️ HIERARCHY: Best category parent ID: {best_match} (score: {best_score})")
+            return best_match
+            
+        except Exception as e:
+            self.log(f"❌ HIERARCHY: Error finding category parent: {str(e)}")
+            return None
+
+    def _find_best_subcategory_parent(self, title: str, content: str, existing_articles: List[Dict]) -> Optional[int]:
+        """Find the best subcategory to use as parent for a content article"""
+        try:
+            # Get subcategories (articles that have root categories as parents)
+            root_categories = [a for a in existing_articles if a.get('parent_id') is None]
+            root_ids = {a.get('id') for a in root_categories}
+            
+            subcategories = [a for a in existing_articles if a.get('parent_id') in root_ids]
+            
+            if not subcategories:
+                # If no subcategories exist, find best root category as parent
+                self.log("🏗️ HIERARCHY: No subcategories found, using best root category as parent")
+                return self._find_best_category_parent(title, content, existing_articles)
+            
+            # Find best matching subcategory
+            best_match = None
+            best_score = 0
+            
+            for subcategory in subcategories:
+                score = 0
+                subcategory_title = subcategory.get('title', '').lower()
+                search_text = (title + ' ' + content).lower()
+                
+                # Score based on keyword overlap
+                subcat_words = set(subcategory_title.split())
+                content_words = set(search_text.split())
+                overlap = len(subcat_words.intersection(content_words))
+                
+                score += overlap * 3  # Higher weight for subcategory matching
+                
+                # Boost for semantic similarity
+                if any(word in subcategory_title for word in search_text.split()[:5]):
+                    score += 2
+                
+                if score > best_score:
+                    best_score = score
+                    best_match = subcategory.get('id')
+            
+            self.log(f"🏗️ HIERARCHY: Best subcategory parent ID: {best_match} (score: {best_score})")
+            return best_match
+            
+        except Exception as e:
+            self.log(f"❌ HIERARCHY: Error finding subcategory parent: {str(e)}")
+            return None
