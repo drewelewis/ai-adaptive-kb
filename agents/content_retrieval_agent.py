@@ -405,14 +405,21 @@ When conducting content research, leverage GitLab's collaborative features to pr
             self.log(f"❌ Error creating search optimization work items: {str(e)}")
             return {"created": False, "message": f"Error creating work: {str(e)}"}
 
-    def process(self, state: AgentState) -> AgentState:
-        """Process content retrieval requests"""
-        self.log("Processing content retrieval request")
+    def process(self, prompt: str, state: AgentState) -> AgentState:
+        """Process content retrieval requests using LLM delegation"""
+        self.log("🔍 Processing retrieval request via LLM delegation")
         
-        # Increment recursion counter
-        self.increment_recursions(state)
+        # Use LLM to handle the request
+        response = self.llm_with_tools.invoke(prompt)
         
-        # Check for messages from Supervisor
+        # Update state with response
+        state.messages.append(AgentMessage(
+            agent_type="content_retrieval",
+            content=str(response.content),
+            timestamp=datetime.now()
+        ))
+        
+        return state
         agent_messages = state.get("agent_messages", [])
         my_messages = [msg for msg in agent_messages if msg.recipient == self.name]
         

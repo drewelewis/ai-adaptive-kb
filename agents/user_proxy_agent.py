@@ -1,4 +1,5 @@
 from typing import List, Dict, Any, Optional
+from datetime import datetime
 from langchain_core.messages import BaseMessage, AIMessage, HumanMessage
 from langchain_openai import AzureChatOpenAI
 from .base_agent import BaseAgent
@@ -42,14 +43,21 @@ You'll see the strategic recommendations shortly, and we can refine them togethe
         system_prompt = prompts.user_proxy_prompt()
         super().__init__("UserProxy", llm, system_prompt)
 
-    def process(self, state: AgentState) -> AgentState:
-        """Process collaborative KB design and user interactions"""
-        self.log("Processing collaborative KB design workflow")
+    def process(self, prompt: str, state: AgentState) -> AgentState:
+        """Process user interaction requests using LLM delegation"""
+        self.log("👤 Processing user request via LLM delegation")
         
-        # Increment recursion counter
-        self.increment_recursions(state)
+        # Use LLM to handle the request
+        response = self.llm_with_tools.invoke(prompt)
         
-        # Safety check for infinite loops
+        # Update state with response
+        state.messages.append(AgentMessage(
+            agent_type="user_proxy",
+            content=str(response.content),
+            timestamp=datetime.now()
+        ))
+        
+        return state
         recursions = state.get("recursions", 0)
         if recursions > 15:  # Increased limit for multi-agent workflows
             self.log(f"Maximum recursions ({recursions}) reached, stopping workflow")

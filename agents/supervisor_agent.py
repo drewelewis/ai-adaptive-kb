@@ -225,14 +225,21 @@ You are the team's servant leader, focused on maximizing team effectiveness and 
         
         return f"{foundational_prompt}\n\n{specialized_supervision_prompt}"
 
-    def process(self, state: AgentState) -> AgentState:
-        """Review and validate work from other agents"""
-        self.log("Processing work review request")
+    def process(self, prompt: str, state: AgentState) -> AgentState:
+        """Process supervision requests using LLM delegation"""
+        self.log("👥 Processing supervision request via LLM delegation")
         
-        # Increment recursion counter
-        self.increment_recursions(state)
+        # Use LLM to handle the request
+        response = self.llm_with_tools.invoke(prompt)
         
-        # Check for excessive recursions and reset if needed
+        # Update state with response
+        state.messages.append(AgentMessage(
+            agent_type="supervisor",
+            content=str(response.content),
+            timestamp=datetime.now()
+        ))
+        
+        return state
         recursions = state.get("recursions", 0)
         if recursions > 12 or state.get("loop_detected", False):
             self.log(f"Loop or excessive recursions detected, resetting session")

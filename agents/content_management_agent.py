@@ -148,14 +148,21 @@ You operate in an autonomous swarming model where you:
 You are fully autonomous and empowered to complete work items independently while maintaining high quality standards and clear communication through GitLab.
 """
     
-    def process(self, state: AgentState) -> AgentState:
-        """Process content management requests in autonomous swarming mode"""
-        self.log("Processing in autonomous swarming mode")
+    def process(self, prompt: str, state: AgentState) -> AgentState:
+        """Process content management requests using LLM delegation"""
+        self.log("📊 Processing management request via LLM delegation")
         
-        # Increment recursion counter
-        self.increment_recursions(state)
+        # Use LLM to handle the request
+        response = self.llm_with_tools.invoke(prompt)
         
-        # Check for supervisor feedback on completed work
+        # Update state with response
+        state.messages.append(AgentMessage(
+            agent_type="content_management",
+            content=str(response.content),
+            timestamp=datetime.now()
+        ))
+        
+        return state
         supervisor_feedback = self._check_supervisor_feedback(state)
         if supervisor_feedback:
             return self._handle_supervisor_feedback(supervisor_feedback, state)

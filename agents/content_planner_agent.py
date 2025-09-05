@@ -176,13 +176,21 @@ When engaging in strategic planning, consider the entire ecosystem of projects a
         7. Create a detailed implementation plan for ContentCreator with clear KB context
         """
     
-    def process(self, state: AgentState) -> AgentState:
-        """Process planning requests and create comprehensive content strategies"""
-        # Increment recursion counter
-        self.increment_recursions(state)
+    def process(self, prompt: str, state: AgentState) -> AgentState:
+        """Process planning requests using LLM delegation"""
+        self.log("📋 Processing planning request via LLM delegation")
         
-        # Check for messages from Supervisor
-        agent_messages = state.get("agent_messages", [])
+        # Use LLM to handle the request
+        response = self.llm_with_tools.invoke(prompt)
+        
+        # Update state with response
+        state.messages.append(AgentMessage(
+            agent_type="content_planner",
+            content=str(response.content),
+            timestamp=datetime.now()
+        ))
+        
+        return state
         my_messages = [msg for msg in agent_messages if msg.recipient == self.name]
         
         if not my_messages:

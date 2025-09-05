@@ -251,12 +251,21 @@ When creating content, leverage GitLab's collaborative features to ensure alignm
         - Content is ready for the intended repurposing scenarios
         """
     
-    def process(self, state: AgentState) -> AgentState:
-        """Process content creation requests"""
-        self.log("Processing content creation request")
+    def process(self, prompt: str, state: AgentState) -> AgentState:
+        """Process content creation requests using LLM delegation"""
+        self.log("🎯 Processing content creation request via LLM delegation")
         
-        # Increment recursion counter
-        self.increment_recursions(state)
+        # Use LLM to handle the request
+        response = self.llm_with_tools.invoke(prompt)
+        
+        # Update state with response
+        state.messages.append(AgentMessage(
+            agent_type="content_creator",
+            content=str(response.content),
+            timestamp=datetime.now()
+        ))
+        
+        return state
         
         # Check for messages from ContentPlanner
         agent_messages = state.get("agent_messages", [])
